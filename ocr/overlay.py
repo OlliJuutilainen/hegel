@@ -50,6 +50,52 @@ def get_text_font(font_file: str | None = None) -> str:
     return _registered_font
 
 
+def build_positioned_overlay_page(
+    words,
+    img_w: int,
+    img_h: int,
+    page_w: float,
+    page_h: float,
+    *,
+    font: str = _FALLBACK_FONT,
+) -> PageObject:
+    """Place each OCR word at its real bounding box (scaled from image px to PDF points).
+
+    `words` is any sequence of objects with .text/.left/.top/.width/.height (image
+    pixels, top-left origin). The text is invisible and horizontally squeezed to the
+    box width so selection/highlighting lines up with the printed glyphs.
+    """
+    scale_x = page_w / img_w
+    scale_y = page_h / img_h
+
+    packet = io.BytesIO()
+    c = canvas.Canvas(packet, pagesize=(page_w, page_h))
+    for w in words:
+        text = w.text
+        if font == _FALLBACK_FONT:
+            text = text.encode("latin-1", "replace").decode("latin-1")
+        if not text:
+            continue
+        size = max(w.height * scale_y, 1.0)
+        x = w.left * scale_x
+        y = page_h - (w.top + w.height) * scale_y  # PDF origin is bottom-left
+
+        natural = pdfmetrics.stringWidth(text, font, size)
+        target = w.width * scale_x
+
+        text_obj = c.beginText(x, y)
+        text_obj.setFont(font, size)
+        text_obj.setTextRenderMode(_INVISIBLE)
+        if natural > 0 and target > 0:
+            text_obj.setHorizScale(100.0 * target / natural)
+        text_obj.textLine(text)
+        c.drawText(text_obj)
+    c.showPage()
+    c.save()
+    packet.seek(0)
+    return PdfReader(packet).pages[0]
+
+
 def _line_count(text: str, font: str, size: float, usable_w: float) -> int:
     total = 0
     for paragraph in text.split("\n"):
