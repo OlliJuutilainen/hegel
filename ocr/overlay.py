@@ -50,6 +50,60 @@ def get_text_font(font_file: str | None = None) -> str:
     return _registered_font
 
 
+def _group_by_line(words):
+    """Group Tesseract words into lines by (block, paragraph, line) and sort each line left-to-right."""
+    groups: dict = {}
+    for w in words:
+        key = (
+            getattr(w, "block_num", 0),
+            getattr(w, "par_num", 0),
+            getattr(w, "line_num", 0),
+        )
+        groups.setdefault(key, []).append(w)
+    return [
+        sorted(groups[key], key=lambda w: (getattr(w, "word_num", 0), w.left))
+        for key in sorted(groups.keys())
+    ]
+
+
+def _emit_line(c, line_words, scale_x, scale_y, page_h, font):
+    """Emit one positioned text block for an entire OCR line.
+
+    Joining a line's words into a single space-separated Tj string is the only fully
+    portable way to get text selection right: spatial-extraction readers (macOS
+    Preview, e-reader apps) ignore trailing spaces and gap-infer their own spacing —
+    so per-word emission produces glued text. With one Tj per line the spaces are
+    real characters and no heuristic can drop them.
+    """
+    if not line_words:
+        return
+    text = " ".join(w.text for w in line_words if w.text)
+    if font == _FALLBACK_FONT:
+        text = text.encode("latin-1", "replace").decode("latin-1")
+    if not text.strip():
+        return
+
+    line_left = min(w.left for w in line_words)
+    line_right = max(w.left + w.width for w in line_words)
+    line_top = min(w.top for w in line_words)
+    line_bottom = max(w.top + w.height for w in line_words)
+
+    size = max((line_bottom - line_top) * scale_y, 1.0)
+    x = line_left * scale_x
+    y = page_h - line_bottom * scale_y  # baseline at the bottom of the line's bbox
+
+    natural = pdfmetrics.stringWidth(text, font, size)
+    target = (line_right - line_left) * scale_x
+
+    text_obj = c.beginText(x, y)
+    text_obj.setFont(font, size)
+    text_obj.setTextRenderMode(_INVISIBLE)
+    if natural > 0 and target > 0:
+        text_obj.setHorizScale(100.0 * target / natural)
+    text_obj.textLine(text + " ")
+    c.drawText(text_obj)
+
+
 def build_positioned_overlay_page(
     words,
     img_w: int,
@@ -59,40 +113,14 @@ def build_positioned_overlay_page(
     *,
     font: str = _FALLBACK_FONT,
 ) -> PageObject:
-    """Place each OCR word at its real bounding box (scaled from image px to PDF points).
-
-    `words` is any sequence of objects with .text/.left/.top/.width/.height (image
-    pixels, top-left origin). The text is invisible and horizontally squeezed to the
-    box width so selection/highlighting lines up with the printed glyphs.
-    """
+    """Place each OCR line as a positioned invisible text block (one Tj per line)."""
     scale_x = page_w / img_w
     scale_y = page_h / img_h
 
     packet = io.BytesIO()
     c = canvas.Canvas(packet, pagesize=(page_w, page_h))
-    for w in words:
-        text = w.text
-        if font == _FALLBACK_FONT:
-            text = text.encode("latin-1", "replace").decode("latin-1")
-        if not text:
-            continue
-        size = max(w.height * scale_y, 1.0)
-        x = w.left * scale_x
-        y = page_h - (w.top + w.height) * scale_y  # PDF origin is bottom-left
-
-        natural = pdfmetrics.stringWidth(text, font, size)
-        target = w.width * scale_x
-
-        text_obj = c.beginText(x, y)
-        text_obj.setFont(font, size)
-        text_obj.setTextRenderMode(_INVISIBLE)
-        if natural > 0 and target > 0:
-            text_obj.setHorizScale(100.0 * target / natural)
-        # Trailing space so PDF readers reliably separate words on selection/copy:
-        # absolutely-positioned per-word text blocks otherwise rely on each reader's
-        # gap-inference heuristic, which fails inside a line for tight word spacing.
-        text_obj.textLine(text + " ")
-        c.drawText(text_obj)
+    for line_words in _group_by_line(words):
+        _emit_line(c, line_words, scale_x, scale_y, page_h, font)
     c.showPage()
     c.save()
     packet.seek(0)
@@ -125,28 +153,8 @@ def build_image_page_with_text(
     packet = io.BytesIO()
     c = canvas.Canvas(packet, pagesize=(page_w, page_h))
     c.drawImage(ImageReader(img_buf), 0, 0, width=page_w, height=page_h)
-
-    for w in words:
-        text = w.text
-        if font == _FALLBACK_FONT:
-            text = text.encode("latin-1", "replace").decode("latin-1")
-        if not text:
-            continue
-        size = max(w.height * scale_y, 1.0)
-        x = w.left * scale_x
-        y = page_h - (w.top + w.height) * scale_y
-
-        natural = pdfmetrics.stringWidth(text, font, size)
-        target = w.width * scale_x
-
-        text_obj = c.beginText(x, y)
-        text_obj.setFont(font, size)
-        text_obj.setTextRenderMode(_INVISIBLE)
-        if natural > 0 and target > 0:
-            text_obj.setHorizScale(100.0 * target / natural)
-        # Trailing space — see note in build_positioned_overlay_page.
-        text_obj.textLine(text + " ")
-        c.drawText(text_obj)
+    for line_words in _group_by_line(words):
+        _emit_line(c, line_words, scale_x, scale_y, page_h, font)
 
     c.showPage()
     c.save()

@@ -26,6 +26,10 @@ class Word:
     width: int
     height: int
     conf: float  # 0-100; -1 means Tesseract reported no confidence
+    block_num: int = 0
+    par_num: int = 0
+    line_num: int = 0
+    word_num: int = 0
 
 
 def ocr_words(image: Image, lang: str = "eng", min_conf: float = 0.0) -> list[Word]:
@@ -51,6 +55,10 @@ def ocr_words(image: Image, lang: str = "eng", min_conf: float = 0.0) -> list[Wo
                 width=int(data["width"][i]),
                 height=int(data["height"][i]),
                 conf=conf,
+                block_num=int(data["block_num"][i]),
+                par_num=int(data["par_num"][i]),
+                line_num=int(data["line_num"][i]),
+                word_num=int(data["word_num"][i]),
             )
         )
     return words
