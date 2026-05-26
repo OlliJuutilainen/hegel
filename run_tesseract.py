@@ -39,6 +39,19 @@ def main() -> int:
     parser.add_argument(
         "--text-out", default=None, help="Optional path to also dump the plain transcription"
     )
+    parser.add_argument(
+        "--no-rasterize",
+        action="store_true",
+        help="Merge onto the original page instead of rebuilding from the rendered image. "
+        "Preserves source bytes, but any pre-existing (corrupt) text layer in the source "
+        "PDF will remain alongside the OCR layer and contaminate text selection.",
+    )
+    parser.add_argument(
+        "--jpeg-quality",
+        type=int,
+        default=85,
+        help="JPEG quality for the rebuilt page background (default: 85). Ignored with --no-rasterize.",
+    )
     args = parser.parse_args()
 
     if shutil.which("tesseract") is None:
@@ -51,7 +64,12 @@ def main() -> int:
         return 1
 
     settings = Settings(
-        lang=args.lang, dpi=args.dpi, min_conf=args.min_conf, font_file=args.font_file
+        lang=args.lang,
+        dpi=args.dpi,
+        min_conf=args.min_conf,
+        font_file=args.font_file,
+        rasterize=not args.no_rasterize,
+        jpeg_quality=args.jpeg_quality,
     )
     failures = run(args.input, args.output, settings, text_sidecar=args.text_out)
 

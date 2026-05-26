@@ -11,7 +11,7 @@ import io
 import os
 
 from pypdf import PageObject, PdfReader
-from reportlab.lib.utils import simpleSplit
+from reportlab.lib.utils import ImageReader, simpleSplit
 from reportlab.pdfbase import pdfmetrics
 from reportlab.pdfbase.ttfonts import TTFont
 from reportlab.pdfgen import canvas
@@ -90,6 +90,60 @@ def build_positioned_overlay_page(
             text_obj.setHorizScale(100.0 * target / natural)
         text_obj.textLine(text)
         c.drawText(text_obj)
+    c.showPage()
+    c.save()
+    packet.seek(0)
+    return PdfReader(packet).pages[0]
+
+
+def build_image_page_with_text(
+    image,
+    words,
+    page_w: float,
+    page_h: float,
+    *,
+    font: str = _FALLBACK_FONT,
+    jpeg_quality: int = 85,
+) -> PageObject:
+    """Build a self-contained PDF page from scratch: the rendered scan as background plus our
+    invisible OCR text on top. Any pre-existing (corrupt) text layer in the source PDF is
+    dropped, so text selection picks up only the clean OCR layer.
+    """
+    img_w, img_h = image.size
+    scale_x = page_w / img_w
+    scale_y = page_h / img_h
+
+    img_buf = io.BytesIO()
+    if image.mode != "RGB":
+        image = image.convert("RGB")
+    image.save(img_buf, format="JPEG", quality=jpeg_quality, optimize=True)
+    img_buf.seek(0)
+
+    packet = io.BytesIO()
+    c = canvas.Canvas(packet, pagesize=(page_w, page_h))
+    c.drawImage(ImageReader(img_buf), 0, 0, width=page_w, height=page_h)
+
+    for w in words:
+        text = w.text
+        if font == _FALLBACK_FONT:
+            text = text.encode("latin-1", "replace").decode("latin-1")
+        if not text:
+            continue
+        size = max(w.height * scale_y, 1.0)
+        x = w.left * scale_x
+        y = page_h - (w.top + w.height) * scale_y
+
+        natural = pdfmetrics.stringWidth(text, font, size)
+        target = w.width * scale_x
+
+        text_obj = c.beginText(x, y)
+        text_obj.setFont(font, size)
+        text_obj.setTextRenderMode(_INVISIBLE)
+        if natural > 0 and target > 0:
+            text_obj.setHorizScale(100.0 * target / natural)
+        text_obj.textLine(text)
+        c.drawText(text_obj)
+
     c.showPage()
     c.save()
     packet.seek(0)

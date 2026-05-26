@@ -8,7 +8,11 @@ from pypdf import PdfReader, PdfWriter
 from tqdm import tqdm
 
 from . import render
-from .overlay import build_positioned_overlay_page, get_text_font
+from .overlay import (
+    build_image_page_with_text,
+    build_positioned_overlay_page,
+    get_text_font,
+)
 from .tesseract_ocr import ocr_words
 
 
@@ -18,6 +22,11 @@ class Settings:
     dpi: int = 300  # Tesseract's accuracy sweet spot
     min_conf: float = 0.0
     font_file: str | None = None
+    # Rebuild each output page from scratch (image + clean OCR text) so any pre-existing
+    # corrupt text layer in the source PDF is dropped. Set False to merge onto the original
+    # page instead, which preserves source bytes but keeps the corrupt layer alongside ours.
+    rasterize: bool = True
+    jpeg_quality: int = 85
 
 
 def run(
@@ -26,7 +35,7 @@ def run(
     settings: Settings,
     text_sidecar: str | None = None,
 ) -> list[tuple[int, str]]:
-    """OCR every page locally and bake a word-aligned invisible layer onto the originals."""
+    """OCR every page locally and write a PDF with a word-aligned invisible text layer."""
     total = render.page_count(input_pdf)
     font = get_text_font(settings.font_file)
 
@@ -41,20 +50,28 @@ def run(
         page_h = float(page.mediabox.height)
 
         words = []
+        image = None
         try:
             image = render.render_page(input_pdf, page_no, settings.dpi)
             words = ocr_words(image, lang=settings.lang, min_conf=settings.min_conf)
-            img_w, img_h = image.size
         except Exception as exc:  # one bad page must not abort the whole run
             failures.append((page_no, repr(exc)))
-            img_w = img_h = 0
 
-        if words and img_w and img_h:
+        if settings.rasterize and image is not None:
+            # Rebuild from scratch — drops any pre-existing text layer entirely.
+            new_page = build_image_page_with_text(
+                image, words, page_w, page_h, font=font, jpeg_quality=settings.jpeg_quality
+            )
+            writer.add_page(new_page)
+        elif words and image is not None:
+            # Legacy: merge onto the original page (keeps pre-existing text alongside ours).
             overlay = build_positioned_overlay_page(
-                words, img_w, img_h, page_w, page_h, font=font
+                words, image.size[0], image.size[1], page_w, page_h, font=font
             )
             page.merge_page(overlay)
-        writer.add_page(page)
+            writer.add_page(page)
+        else:
+            writer.add_page(page)
 
         if text_sidecar is not None:
             sidecar_parts.append(
