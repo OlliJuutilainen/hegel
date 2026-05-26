@@ -88,7 +88,10 @@ def build_positioned_overlay_page(
         text_obj.setTextRenderMode(_INVISIBLE)
         if natural > 0 and target > 0:
             text_obj.setHorizScale(100.0 * target / natural)
-        text_obj.textLine(text)
+        # Trailing space so PDF readers reliably separate words on selection/copy:
+        # absolutely-positioned per-word text blocks otherwise rely on each reader's
+        # gap-inference heuristic, which fails inside a line for tight word spacing.
+        text_obj.textLine(text + " ")
         c.drawText(text_obj)
     c.showPage()
     c.save()
@@ -141,7 +144,8 @@ def build_image_page_with_text(
         text_obj.setTextRenderMode(_INVISIBLE)
         if natural > 0 and target > 0:
             text_obj.setHorizScale(100.0 * target / natural)
-        text_obj.textLine(text)
+        # Trailing space — see note in build_positioned_overlay_page.
+        text_obj.textLine(text + " ")
         c.drawText(text_obj)
 
     c.showPage()
