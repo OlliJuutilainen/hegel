@@ -52,12 +52,18 @@ def get_text_font(font_file: str | None = None) -> str:
     return _registered_font
 
 
-def _emit_line(c, line_words, scale_x, scale_y, page_h, font):
+def _emit_line(c, line_words, scale_x, scale_y, page_h, font, force_left=None):
     """Emit one positioned invisible text block for an entire OCR line.
 
     Joining a line's words into a single space-separated Tj string gives reliable
     word separation regardless of a reader's gap-inference heuristic. The trailing
     space helps the fallback copy path when /ActualText is not honored.
+
+    `force_left` (image px) overrides the line's left origin. It is set on a line
+    whose first word was pulled up to the previous line by de-hyphenation, so the
+    line is anchored at its original left margin (not the now-indented first
+    remaining word) — otherwise the indent reads as a paragraph break to viewers
+    like Preview that infer structure from geometry.
     """
     if not line_words:
         return
@@ -72,12 +78,13 @@ def _emit_line(c, line_words, scale_x, scale_y, page_h, font):
     line_top = min(w.top for w in line_words)
     line_bottom = max(w.top + w.height for w in line_words)
 
+    left_px = force_left if force_left is not None else line_left
     size = max((line_bottom - line_top) * scale_y, 1.0)
-    x = line_left * scale_x
+    x = left_px * scale_x
     y = page_h - line_bottom * scale_y  # baseline at the bottom of the line's bbox
 
     natural = pdfmetrics.stringWidth(text, font, size)
-    target = (line_right - line_left) * scale_x
+    target = (line_right - left_px) * scale_x
 
     text_obj = c.beginText(x, y)
     text_obj.setFont(font, size)
@@ -165,6 +172,7 @@ def _dehyphenate_lines(lines):
     gets over-joined. Most academic cases follow soft-hyphen patterns, so net win.
     """
     new = [list(line) for line in lines]
+    forced_left: dict = {}
     for i in range(len(new) - 1):
         cur, nxt = new[i], new[i + 1]
         if not cur or not nxt:
@@ -179,8 +187,9 @@ def _dehyphenate_lines(lines):
             and first.text[:1].islower()
         ):
             cur[-1] = dataclasses.replace(last, text=last.text[:-1] + first.text)
+            forced_left[i + 1] = first.left  # anchor the continuation at its original margin
             del nxt[0]
-    return new
+    return new, forced_left
 
 
 def _emit_paragraph(c, lines, scale_x, scale_y, page_h, font):
@@ -193,7 +202,7 @@ def _emit_paragraph(c, lines, scale_x, scale_y, page_h, font):
     """
     if not lines:
         return
-    lines = _dehyphenate_lines(lines)
+    lines, forced_left = _dehyphenate_lines(lines)
     clean = _paragraph_actualtext(lines)
     if font == _FALLBACK_FONT:
         clean = clean.encode("latin-1", "replace").decode("latin-1")
@@ -201,8 +210,8 @@ def _emit_paragraph(c, lines, scale_x, scale_y, page_h, font):
     has_span = bool(clean.strip())
     if has_span:
         c._code.append("/Span << /ActualText <%s> >> BDC" % _actualtext_hex(clean))
-    for line_words in lines:
-        _emit_line(c, line_words, scale_x, scale_y, page_h, font)
+    for idx, line_words in enumerate(lines):
+        _emit_line(c, line_words, scale_x, scale_y, page_h, font, force_left=forced_left.get(idx))
     if has_span:
         c._code.append("EMC")
 
