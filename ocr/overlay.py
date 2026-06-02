@@ -1,8 +1,9 @@
 """Build an invisible, selectable text layer and merge it onto the original page.
 
-Claude returns text but no coordinates, so the layer cannot be pixel-aligned to the
-scan. Instead the text flows top-to-bottom in reading order and is auto-shrunk so the
-whole transcription fits within the page bounds, keeping it searchable and copyable.
+For the Tesseract routes the layer is positioned per OCR line and wrapped, per
+paragraph, in an /ActualText marked-content span so copy/paste yields clean flowing
+paragraph text (de-hyphenated, line breaks collapsed to spaces). For the Claude-vision
+route (no coordinates) the text simply flows top-to-bottom, auto-shrunk to fit.
 """
 
 from __future__ import annotations
@@ -50,30 +51,12 @@ def get_text_font(font_file: str | None = None) -> str:
     return _registered_font
 
 
-def _group_by_line(words):
-    """Group Tesseract words into lines by (block, paragraph, line) and sort each line left-to-right."""
-    groups: dict = {}
-    for w in words:
-        key = (
-            getattr(w, "block_num", 0),
-            getattr(w, "par_num", 0),
-            getattr(w, "line_num", 0),
-        )
-        groups.setdefault(key, []).append(w)
-    return [
-        sorted(groups[key], key=lambda w: (getattr(w, "word_num", 0), w.left))
-        for key in sorted(groups.keys())
-    ]
-
-
 def _emit_line(c, line_words, scale_x, scale_y, page_h, font):
-    """Emit one positioned text block for an entire OCR line.
+    """Emit one positioned invisible text block for an entire OCR line.
 
-    Joining a line's words into a single space-separated Tj string is the only fully
-    portable way to get text selection right: spatial-extraction readers (macOS
-    Preview, e-reader apps) ignore trailing spaces and gap-infer their own spacing —
-    so per-word emission produces glued text. With one Tj per line the spaces are
-    real characters and no heuristic can drop them.
+    Joining a line's words into a single space-separated Tj string gives reliable
+    word separation regardless of a reader's gap-inference heuristic. The trailing
+    space helps the fallback copy path when /ActualText is not honored.
     """
     if not line_words:
         return
@@ -104,6 +87,93 @@ def _emit_line(c, line_words, scale_x, scale_y, page_h, font):
     c.drawText(text_obj)
 
 
+def _group_by_paragraph(words):
+    """Group Tesseract words into paragraphs, each an ordered list of lines.
+
+    Returns a list of paragraphs in reading order; each paragraph is a list of lines,
+    each line a list of Words sorted left-to-right. Grouping keys come straight from
+    Tesseract's layout analysis (block_num, par_num, line_num).
+    """
+    paras: dict = {}
+    for w in words:
+        pkey = (getattr(w, "block_num", 0), getattr(w, "par_num", 0))
+        paras.setdefault(pkey, []).append(w)
+
+    result = []
+    for pkey in sorted(paras.keys()):
+        lines: dict = {}
+        for w in paras[pkey]:
+            lines.setdefault(getattr(w, "line_num", 0), []).append(w)
+        ordered = [
+            sorted(lines[lk], key=lambda w: (getattr(w, "word_num", 0), w.left))
+            for lk in sorted(lines.keys())
+        ]
+        result.append(ordered)
+    return result
+
+
+def _paragraph_actualtext(lines) -> str:
+    """Build the clean copy-text for a paragraph: lines joined, soft hyphens removed.
+
+    A trailing '-' at a line end is treated as a soft (line-break) hyphen and dropped
+    when the next line begins with a lowercase letter — this fixes the common case
+    ("be-\\ning" -> "being") while leaving most real compound hyphens intact (a capital
+    continuation keeps the hyphen). It can still occasionally over-join a genuine
+    compound that wraps at its hyphen; a wordlist could refine this later.
+    """
+    line_texts = []
+    for ln in lines:
+        t = " ".join(w.text for w in ln if w.text).strip()
+        if t:
+            line_texts.append(t)
+
+    out = ""
+    for i, t in enumerate(line_texts):
+        if i == 0:
+            out = t
+            continue
+        if (
+            out.endswith("-")
+            and len(out) >= 2
+            and out[-2].isalpha()
+            and t[:1].isalpha()
+            and t[:1].islower()
+        ):
+            out = out[:-1] + t  # de-hyphenate: join directly, no space
+        else:
+            out = out + " " + t
+    return out
+
+
+def _actualtext_hex(s: str) -> str:
+    """Encode a string as a UTF-16BE PDF hex string body with BOM, for /ActualText."""
+    return "FEFF" + s.encode("utf-16-be").hex().upper()
+
+
+def _emit_paragraph(c, lines, scale_x, scale_y, page_h, font):
+    """Emit one paragraph: its positioned per-line text wrapped in an /ActualText span.
+
+    The per-line invisible text still drives highlighting, search, and the fallback copy
+    path. The surrounding marked-content /ActualText gives conformant copy engines (PDF
+    spec, macOS PDFKit) the clean paragraph string instead — de-hyphenated and with the
+    visual line breaks collapsed to single spaces, so copy yields flowing paragraph text
+    with newlines only between paragraphs.
+    """
+    if not lines:
+        return
+    clean = _paragraph_actualtext(lines)
+    if font == _FALLBACK_FONT:
+        clean = clean.encode("latin-1", "replace").decode("latin-1")
+
+    has_span = bool(clean.strip())
+    if has_span:
+        c._code.append("/Span << /ActualText <%s> >> BDC" % _actualtext_hex(clean))
+    for line_words in lines:
+        _emit_line(c, line_words, scale_x, scale_y, page_h, font)
+    if has_span:
+        c._code.append("EMC")
+
+
 def build_positioned_overlay_page(
     words,
     img_w: int,
@@ -113,14 +183,14 @@ def build_positioned_overlay_page(
     *,
     font: str = _FALLBACK_FONT,
 ) -> PageObject:
-    """Place each OCR line as a positioned invisible text block (one Tj per line)."""
+    """Place each OCR paragraph as positioned invisible text wrapped in an /ActualText span."""
     scale_x = page_w / img_w
     scale_y = page_h / img_h
 
     packet = io.BytesIO()
     c = canvas.Canvas(packet, pagesize=(page_w, page_h))
-    for line_words in _group_by_line(words):
-        _emit_line(c, line_words, scale_x, scale_y, page_h, font)
+    for para in _group_by_paragraph(words):
+        _emit_paragraph(c, para, scale_x, scale_y, page_h, font)
     c.showPage()
     c.save()
     packet.seek(0)
@@ -153,8 +223,8 @@ def build_image_page_with_text(
     packet = io.BytesIO()
     c = canvas.Canvas(packet, pagesize=(page_w, page_h))
     c.drawImage(ImageReader(img_buf), 0, 0, width=page_w, height=page_h)
-    for line_words in _group_by_line(words):
-        _emit_line(c, line_words, scale_x, scale_y, page_h, font)
+    for para in _group_by_paragraph(words):
+        _emit_paragraph(c, para, scale_x, scale_y, page_h, font)
 
     c.showPage()
     c.save()
