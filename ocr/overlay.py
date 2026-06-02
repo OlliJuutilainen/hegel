@@ -8,6 +8,7 @@ route (no coordinates) the text simply flows top-to-bottom, auto-shrunk to fit.
 
 from __future__ import annotations
 
+import dataclasses
 import io
 import os
 
@@ -150,17 +151,49 @@ def _actualtext_hex(s: str) -> str:
     return "FEFF" + s.encode("utf-16-be").hex().upper()
 
 
+def _dehyphenate_lines(lines):
+    """Return a copy of `lines` with soft line-break hyphens absorbed.
+
+    When line N's last word ends with '-' (preceded by an alpha char) and line N+1's
+    first word starts with a lowercase alpha char, merge them: line N's last word
+    becomes 'prefix + nextword' (no hyphen), and line N+1's first word is dropped.
+
+    This rewrites the actual Tj text emitted to the page, so the fix survives readers
+    that ignore /ActualText (notably Big Sur Preview). Visible glyphs in the scan are
+    untouched — only the invisible OCR layer changes. Caveat: a real compound that
+    wraps at its hyphen with a lowercase continuation (e.g. 'self-' / 'assertion')
+    gets over-joined. Most academic cases follow soft-hyphen patterns, so net win.
+    """
+    new = [list(line) for line in lines]
+    for i in range(len(new) - 1):
+        cur, nxt = new[i], new[i + 1]
+        if not cur or not nxt:
+            continue
+        last = cur[-1]
+        first = nxt[0]
+        if (
+            last.text.endswith("-")
+            and len(last.text) >= 2
+            and last.text[-2].isalpha()
+            and first.text[:1].isalpha()
+            and first.text[:1].islower()
+        ):
+            cur[-1] = dataclasses.replace(last, text=last.text[:-1] + first.text)
+            del nxt[0]
+    return new
+
+
 def _emit_paragraph(c, lines, scale_x, scale_y, page_h, font):
     """Emit one paragraph: its positioned per-line text wrapped in an /ActualText span.
 
-    The per-line invisible text still drives highlighting, search, and the fallback copy
-    path. The surrounding marked-content /ActualText gives conformant copy engines (PDF
-    spec, macOS PDFKit) the clean paragraph string instead — de-hyphenated and with the
-    visual line breaks collapsed to single spaces, so copy yields flowing paragraph text
-    with newlines only between paragraphs.
+    Soft line-break hyphens are absorbed into the previous line's last word first, so
+    even readers that ignore /ActualText (Big Sur Preview) yield 'being' instead of
+    'be- ing'. The /ActualText span carries the same clean paragraph string for
+    spec-conformant readers.
     """
     if not lines:
         return
+    lines = _dehyphenate_lines(lines)
     clean = _paragraph_actualtext(lines)
     if font == _FALLBACK_FONT:
         clean = clean.encode("latin-1", "replace").decode("latin-1")
