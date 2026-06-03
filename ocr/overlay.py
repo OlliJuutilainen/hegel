@@ -123,13 +123,12 @@ def _group_by_paragraph(words):
 def _merge_continuation_paragraphs(paragraphs):
     """Merge adjacent paragraphs that look like a single visual paragraph.
 
-    Tesseract sometimes assigns a fresh par_num to lines that are visually part of
-    the same paragraph (seen in dense academic prose), which then renders as a
+    Tesseract sometimes assigns a fresh par_num (and even a fresh block_num) to
+    lines that are visually part of the same paragraph, which then renders as a
     paragraph break in any reader that emits one between separate /ActualText spans.
-    Merge two adjacent paragraphs when they are in the same Tesseract block and the
-    vertical gap between them is no larger than typical line spacing — i.e. the next
-    paragraph's first line begins close enough to the previous paragraph's last line
-    that they read as continuous prose.
+    Two signals: a small vertical gap (≤ ~line height) AND a near-identical left
+    margin (a real paragraph break shows up either as a larger gap, or as an indent
+    shift, or both — same margin + line-sized gap = continuous prose).
     """
     if not paragraphs:
         return paragraphs
@@ -140,15 +139,19 @@ def _merge_continuation_paragraphs(paragraphs):
             merged.append(nxt)
             continue
         prev_last_line, next_first_line = prev[-1], nxt[0]
-        if prev_last_line[0].block_num != next_first_line[0].block_num:
-            merged.append(nxt)
-            continue
         prev_bottom = max(w.top + w.height for w in prev_last_line)
         next_top = min(w.top for w in next_first_line)
         gap = next_top - prev_bottom
         heights = [w.height for w in prev_last_line + next_first_line]
         median_h = sorted(heights)[len(heights) // 2] if heights else 0
-        if median_h and gap <= 0.8 * median_h:
+        prev_left = min(w.left for w in prev_last_line)
+        next_left = min(w.left for w in next_first_line)
+        is_continuous = (
+            median_h
+            and gap <= 1.2 * median_h
+            and abs(prev_left - next_left) <= 0.5 * median_h
+        )
+        if is_continuous:
             prev.extend(nxt)
         else:
             merged.append(nxt)
