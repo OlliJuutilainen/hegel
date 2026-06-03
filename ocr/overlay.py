@@ -67,7 +67,7 @@ def _emit_line(c, line_words, scale_x, scale_y, page_h, font, force_left=None):
     """
     if not line_words:
         return
-    text = " ".join(w.text for w in line_words if w.text)
+    text = _normalize_text(" ".join(w.text for w in line_words if w.text))
     if font == _FALLBACK_FONT:
         text = text.encode("latin-1", "replace").decode("latin-1")
     if not text.strip():
@@ -117,7 +117,50 @@ def _group_by_paragraph(words):
             for lk in sorted(lines.keys())
         ]
         result.append(ordered)
-    return result
+    return _merge_continuation_paragraphs(result)
+
+
+def _merge_continuation_paragraphs(paragraphs):
+    """Merge adjacent paragraphs that look like a single visual paragraph.
+
+    Tesseract sometimes assigns a fresh par_num to lines that are visually part of
+    the same paragraph (seen in dense academic prose), which then renders as a
+    paragraph break in any reader that emits one between separate /ActualText spans.
+    Merge two adjacent paragraphs when they are in the same Tesseract block and the
+    vertical gap between them is no larger than typical line spacing — i.e. the next
+    paragraph's first line begins close enough to the previous paragraph's last line
+    that they read as continuous prose.
+    """
+    if not paragraphs:
+        return paragraphs
+    merged = [paragraphs[0]]
+    for nxt in paragraphs[1:]:
+        prev = merged[-1]
+        if not prev or not nxt or not prev[-1] or not nxt[0]:
+            merged.append(nxt)
+            continue
+        prev_last_line, next_first_line = prev[-1], nxt[0]
+        if prev_last_line[0].block_num != next_first_line[0].block_num:
+            merged.append(nxt)
+            continue
+        prev_bottom = max(w.top + w.height for w in prev_last_line)
+        next_top = min(w.top for w in next_first_line)
+        gap = next_top - prev_bottom
+        heights = [w.height for w in prev_last_line + next_first_line]
+        median_h = sorted(heights)[len(heights) // 2] if heights else 0
+        if median_h and gap <= 0.8 * median_h:
+            prev.extend(nxt)
+        else:
+            merged.append(nxt)
+    return merged
+
+
+def _normalize_text(s: str) -> str:
+    """Editorial normalization applied to all emitted text and ActualText strings:
+    em dash without surrounding spaces becomes spaced en dash, and runs of whitespace
+    collapse to a single space.
+    """
+    return " ".join(s.replace("—", " – ").split())
 
 
 def _paragraph_actualtext(lines) -> str:
@@ -150,7 +193,7 @@ def _paragraph_actualtext(lines) -> str:
             out = out[:-1] + t  # de-hyphenate: join directly, no space
         else:
             out = out + " " + t
-    return out
+    return _normalize_text(out)
 
 
 def _actualtext_hex(s: str) -> str:
