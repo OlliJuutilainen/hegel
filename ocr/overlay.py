@@ -218,7 +218,6 @@ def _dehyphenate_lines(lines):
     gets over-joined. Most academic cases follow soft-hyphen patterns, so net win.
     """
     new = [list(line) for line in lines]
-    forced_left: dict = {}
     for i in range(len(new) - 1):
         cur, nxt = new[i], new[i + 1]
         if not cur or not nxt:
@@ -233,31 +232,40 @@ def _dehyphenate_lines(lines):
             and first.text[:1].islower()
         ):
             cur[-1] = dataclasses.replace(last, text=last.text[:-1] + first.text)
-            forced_left[i + 1] = first.left  # anchor the continuation at its original margin
             del nxt[0]
-    return new, forced_left
+    return new
 
 
 def _emit_paragraph(c, lines, scale_x, scale_y, page_h, font):
-    """Emit one paragraph: its positioned per-line text wrapped in an /ActualText span.
+    """Emit one paragraph: per-line positioned text + an /ActualText span.
 
-    Soft line-break hyphens are absorbed into the previous line's last word first, so
-    even readers that ignore /ActualText (Big Sur Preview) yield 'being' instead of
-    'be- ing'. The /ActualText span carries the same clean paragraph string for
-    spec-conformant readers.
+    Anchors every line at the paragraph's flush-left margin (the leftmost edge of
+    its non-first lines, or its single line if there's only one). A first-line
+    indent — typical in academic prose — otherwise tells position-based readers
+    like macOS Preview "this line starts at a different x, must be a new
+    paragraph", causing a spurious line break on every line of the paragraph.
+    The visible scan glyphs are untouched; only the invisible text shifts so all
+    lines share a common left edge.
     """
     if not lines:
         return
-    lines, forced_left = _dehyphenate_lines(lines)
+    lines = _dehyphenate_lines(lines)
     clean = _paragraph_actualtext(lines)
     if font == _FALLBACK_FONT:
         clean = clean.encode("latin-1", "replace").decode("latin-1")
 
+    non_empty = [ln for ln in lines if ln]
+    flush_left = None
+    if len(non_empty) >= 2:
+        flush_left = min(min(w.left for w in ln) for ln in non_empty[1:])
+    elif non_empty:
+        flush_left = min(w.left for w in non_empty[0])
+
     has_span = bool(clean.strip())
     if has_span:
         c._code.append("/Span << /ActualText <%s> >> BDC" % _actualtext_hex(clean))
-    for idx, line_words in enumerate(lines):
-        _emit_line(c, line_words, scale_x, scale_y, page_h, font, force_left=forced_left.get(idx))
+    for line_words in lines:
+        _emit_line(c, line_words, scale_x, scale_y, page_h, font, force_left=flush_left)
     if has_span:
         c._code.append("EMC")
 
