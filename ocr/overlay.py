@@ -52,18 +52,18 @@ def get_text_font(font_file: str | None = None) -> str:
     return _registered_font
 
 
-def _emit_line(c, line_words, scale_x, scale_y, page_h, font, force_left=None):
-    """Emit one positioned invisible text block for an entire OCR line.
+def _emit_line_in(text_obj, line_words, scale_x, scale_y, page_h, font, force_left=None):
+    """Emit one OCR line as Tm/Tf/Tz/Tj operators inside an existing PDF text object.
 
-    Joining a line's words into a single space-separated Tj string gives reliable
-    word separation regardless of a reader's gap-inference heuristic. The trailing
-    space helps the fallback copy path when /ActualText is not honored.
+    The whole paragraph shares one BT...ET block (the caller's text object), so the
+    reader sees one cohesive text object instead of N separately-positioned ones —
+    geometry-based readers like macOS Preview can't then insert paragraph breaks
+    "between objects" because there's only one. This matches what OCRmyPDF produces.
 
-    `force_left` (image px) overrides the line's left origin. It is set on a line
-    whose first word was pulled up to the previous line by de-hyphenation, so the
-    line is anchored at its original left margin (not the now-indented first
-    remaining word) — otherwise the indent reads as a paragraph break to viewers
-    like Preview that infer structure from geometry.
+    Joining a line's words into a single space-separated Tj gives reliable word
+    separation regardless of any gap-inference heuristic. `force_left` (image px)
+    overrides the line's left origin so an indented first line or a de-hyphenated
+    continuation line still anchors at the paragraph's flush-left margin.
     """
     if not line_words:
         return
@@ -81,18 +81,15 @@ def _emit_line(c, line_words, scale_x, scale_y, page_h, font, force_left=None):
     left_px = force_left if force_left is not None else line_left
     size = max((line_bottom - line_top) * scale_y, 1.0)
     x = left_px * scale_x
-    y = page_h - line_bottom * scale_y  # baseline at the bottom of the line's bbox
+    y = page_h - line_bottom * scale_y
 
     natural = pdfmetrics.stringWidth(text, font, size)
     target = (line_right - left_px) * scale_x
 
-    text_obj = c.beginText(x, y)
+    text_obj.setTextOrigin(x, y)  # absolute Tm reposition within the same BT block
     text_obj.setFont(font, size)
-    text_obj.setTextRenderMode(_INVISIBLE)
-    if natural > 0 and target > 0:
-        text_obj.setHorizScale(100.0 * target / natural)
-    text_obj.textLine(text + " ")
-    c.drawText(text_obj)
+    text_obj.setHorizScale(100.0 * target / natural if natural > 0 and target > 0 else 100.0)
+    text_obj.textOut(text + " ")  # Tj without the line-break T* — stay in this BT
 
 
 def _group_by_paragraph(words):
@@ -237,15 +234,17 @@ def _dehyphenate_lines(lines):
 
 
 def _emit_paragraph(c, lines, scale_x, scale_y, page_h, font):
-    """Emit one paragraph: per-line positioned text + an /ActualText span.
+    """Emit one paragraph as a single PDF text object wrapped in an /ActualText span.
 
-    Anchors every line at the paragraph's flush-left margin (the leftmost edge of
-    its non-first lines, or its single line if there's only one). A first-line
-    indent — typical in academic prose — otherwise tells position-based readers
-    like macOS Preview "this line starts at a different x, must be a new
-    paragraph", causing a spurious line break on every line of the paragraph.
-    The visible scan glyphs are untouched; only the invisible text shifts so all
-    lines share a common left edge.
+    All of the paragraph's lines live inside ONE beginText/drawText pair (one BT...ET
+    in the resulting content stream). Per-line positioning happens via setTextOrigin
+    (Tm) inside that block, and textOut (Tj without T*) keeps each line as a plain
+    text-show operator. Readers — including macOS Preview, which insists on its own
+    geometric line/paragraph reconstruction — see one cohesive text object and stop
+    trying to interleave paragraph breaks "between" objects.
+
+    Also anchors every line at the paragraph's flush-left margin so a first-line
+    indent doesn't read as a new-paragraph signal to any leftover geometry checks.
     """
     if not lines:
         return
@@ -255,17 +254,22 @@ def _emit_paragraph(c, lines, scale_x, scale_y, page_h, font):
         clean = clean.encode("latin-1", "replace").decode("latin-1")
 
     non_empty = [ln for ln in lines if ln]
-    flush_left = None
-    if len(non_empty) >= 2:
-        flush_left = min(min(w.left for w in ln) for ln in non_empty[1:])
-    elif non_empty:
-        flush_left = min(w.left for w in non_empty[0])
+    if not non_empty:
+        return
+    flush_left = (
+        min(min(w.left for w in ln) for ln in non_empty[1:])
+        if len(non_empty) >= 2
+        else min(w.left for w in non_empty[0])
+    )
 
     has_span = bool(clean.strip())
     if has_span:
         c._code.append("/Span << /ActualText <%s> >> BDC" % _actualtext_hex(clean))
+    text_obj = c.beginText()
+    text_obj.setTextRenderMode(_INVISIBLE)
     for line_words in lines:
-        _emit_line(c, line_words, scale_x, scale_y, page_h, font, force_left=flush_left)
+        _emit_line_in(text_obj, line_words, scale_x, scale_y, page_h, font, force_left=flush_left)
+    c.drawText(text_obj)
     if has_span:
         c._code.append("EMC")
 
