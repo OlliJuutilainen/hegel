@@ -1,1 +1,1 @@
-"""Re-OCR scanned academic PDFs with Claude vision and add a clean invisible text layer."""
+"""Re-OCR scanned academic PDFs with local Tesseract and add a clean invisible text layer."""
