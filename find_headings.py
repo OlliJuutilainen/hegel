@@ -32,11 +32,57 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import re
 import sys
 from collections import defaultdict
 
 from ocr.render import page_count, render_page
 from ocr.tesseract_ocr import ocr_words
+
+
+# Single-word candidate ending in stray punctuation that's usually a footnote
+# marker stretching the bbox: 'opinion,!', 'concept.!', 'Being-there?', 'word."',
+# 'word.1', 'word.²', etc.  Real one-word headings ('Preface', 'Bibliography',
+# 'Introduction') don't carry this trailing junk.
+_FOOTNOTE_TAIL = re.compile(
+    r"""[a-zA-Z]
+        [.,:;]?
+        (?:
+            ['!?"*‘’“”†‡]+
+          | \.\d+
+          | \.[!?'"‘’“”]+
+        )\s*$""",
+    re.VERBOSE,
+)
+
+
+def _looks_like_noise(text: str) -> bool:
+    """True if this candidate is probably not a heading.
+
+    Three heuristics, all targeting body text that slipped through because a
+    descender, italic, capital, or adjacent footnote marker stretched the bbox:
+
+      1. No 'real' word — none of the tokens contains at least 3 alphabetical
+         characters.  Filters single letters ('I', 'a'), tiny Roman numerals
+         ('I.', 'II.'), and OCR-garble like 'L AL AR'.
+      2. Single-token candidates ending in a stray footnote-marker tail
+         ('opinion,!', 'word.1', 'concept."').
+      3. Single-token candidates ending in plain sentence punctuation
+         ('cognition.', 'singular,', 'philosophy.'). Real one-word headings
+         ('Preface', 'Bibliography', 'Index') don't carry trailing punctuation.
+    """
+    if not text or not text.strip():
+        return True
+    stripped = text.strip()
+    tokens = stripped.split()
+    if not any(sum(1 for ch in t if ch.isalpha()) >= 3 for t in tokens):
+        return True
+    if len(tokens) == 1:
+        if _FOOTNOTE_TAIL.search(stripped):
+            return True
+        if stripped[-1] in ".,;:":
+            return True
+    return False
 
 
 def parse_page_range(spec: str | None, total: int) -> list[int]:
@@ -57,6 +103,7 @@ def collect_candidates(
     dpi: int,
     on_candidate=None,
     progress=True,
+    filter_noise=True,
 ) -> list[tuple[int, float, str]]:
     """Return [(page_number, rel_size, text), ...] in page+reading order.
 
@@ -97,6 +144,8 @@ def collect_candidates(
             if len(line_words) < min_words:
                 continue
             text = " ".join(w.text for w in line_words)
+            if filter_noise and _looks_like_noise(text):
+                continue
             rel = max(w.height for w in line_words) / median
             candidates.append((page_no, rel, text))
             if on_candidate is not None:
@@ -156,6 +205,12 @@ def main() -> int:
         action="store_true",
         help="Print a markdown outline draft instead of the flat candidate list.",
     )
+    parser.add_argument(
+        "--keep-noise",
+        action="store_true",
+        help="Disable the noise filter that drops single-letter lines and body "
+        "words inflated by adjacent footnote markers.",
+    )
     args = parser.parse_args()
 
     total = page_count(args.input)
@@ -164,7 +219,13 @@ def main() -> int:
     if args.draft_outline:
         # Draft mode needs the full list before deciding heading levels.
         candidates = collect_candidates(
-            args.input, pages, args.threshold, args.min_words, args.lang, args.dpi
+            args.input,
+            pages,
+            args.threshold,
+            args.min_words,
+            args.lang,
+            args.dpi,
+            filter_noise=not args.keep_noise,
         )
         print(render_draft_outline(candidates))
     else:
@@ -186,6 +247,7 @@ def main() -> int:
             args.lang,
             args.dpi,
             on_candidate=emit,
+            filter_noise=not args.keep_noise,
         )
     return 0
 
