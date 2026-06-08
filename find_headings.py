@@ -55,15 +55,30 @@ def collect_candidates(
     min_words: int,
     lang: str,
     dpi: int,
+    on_candidate=None,
+    progress=True,
 ) -> list[tuple[int, float, str]]:
-    """Return [(page_number, rel_size, text), ...] in page+reading order."""
+    """Return [(page_number, rel_size, text), ...] in page+reading order.
+
+    `on_candidate(page, rel, text)` is called for each candidate as it's found —
+    so the caller can print/flush in real time instead of waiting for the full
+    pass to finish. `progress=True` prints a per-page progress line to stderr.
+    """
     candidates: list[tuple[int, float, str]] = []
-    for page_no in pages:
+    total = len(pages)
+    for i, page_no in enumerate(pages, 1):
+        if progress:
+            print(
+                f"\r  page {page_no} ({i}/{total})…",
+                end="",
+                file=sys.stderr,
+                flush=True,
+            )
         try:
             image = render_page(pdf_path, page_no, dpi)
             words = ocr_words(image, lang=lang)
         except Exception as exc:
-            print(f"# page {page_no}: render/ocr error: {exc!r}", file=sys.stderr)
+            print(f"\n# page {page_no}: render/ocr error: {exc!r}", file=sys.stderr)
             continue
         if not words:
             continue
@@ -84,6 +99,10 @@ def collect_candidates(
             text = " ".join(w.text for w in line_words)
             rel = max(w.height for w in line_words) / median
             candidates.append((page_no, rel, text))
+            if on_candidate is not None:
+                on_candidate(page_no, rel, text)
+    if progress:
+        print(f"\r  done: scanned {total} page(s).", file=sys.stderr, flush=True)
     return candidates
 
 
@@ -141,19 +160,33 @@ def main() -> int:
 
     total = page_count(args.input)
     pages = parse_page_range(args.pages, total)
-    candidates = collect_candidates(
-        args.input, pages, args.threshold, args.min_words, args.lang, args.dpi
-    )
 
     if args.draft_outline:
+        # Draft mode needs the full list before deciding heading levels.
+        candidates = collect_candidates(
+            args.input, pages, args.threshold, args.min_words, args.lang, args.dpi
+        )
         print(render_draft_outline(candidates))
     else:
+        # Default mode: stream each candidate to stdout as it's found, with flush,
+        # so the user sees progress in the redirected file in real time.
         print(f"# Heading candidates in {args.input}")
         print(f"# Threshold: word height >= {args.threshold}× page median")
         print(f"# Columns: PAGE   REL_SIZE   TEXT")
-        print()
-        for page, rel, text in candidates:
-            print(f"  {page:>4}   {rel:>4.1f}×   {text}")
+        print(flush=True)
+
+        def emit(page: int, rel: float, text: str) -> None:
+            print(f"  {page:>4}   {rel:>4.1f}×   {text}", flush=True)
+
+        collect_candidates(
+            args.input,
+            pages,
+            args.threshold,
+            args.min_words,
+            args.lang,
+            args.dpi,
+            on_candidate=emit,
+        )
     return 0
 
 
