@@ -8,6 +8,7 @@ boxes are the "stumped" spots worth a second, bounded look.
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 
 import pytesseract
@@ -16,6 +17,27 @@ from PIL.Image import Image
 
 # Tesseract's image_to_data emits rows at several levels; words are level 5.
 _WORD_LEVEL = 5
+
+# Footnote/cross-reference markers Tesseract glues onto adjacent body words
+# (the*, has®, withinTM, etc.) or emits as standalone column-edge artifacts (|).
+# Stripped at ingest so downstream consumers — text layer, heading detection,
+# TOC parsing — see clean tokens. Cost: pasting a footnote reference symbol
+# along with body text won't carry the marker; for citation copying that's
+# typically what you want anyway.
+_TRAILING_MARKERS = re.compile(r"[*®™†‡°§|]+$")
+# Tesseract sometimes emits the trademark glyph as literal 'TM' rather than '™'.
+# Strip it only when glued to a real word (3+ lowercase letters before), so
+# legitimate uppercase acronyms (ATM, GTM, MGMT) are untouched.
+_TRAILING_LITERAL_TM = re.compile(r"(?<=[a-z]{3})TM$")
+
+
+def _sanitize_word(text: str) -> str | None:
+    """Strip trailing footnote markers; return None if the token is pure marker."""
+    cleaned = _TRAILING_LITERAL_TM.sub("", text)
+    cleaned = _TRAILING_MARKERS.sub("", cleaned)
+    if not cleaned or not any(ch.isalnum() for ch in cleaned):
+        return None
+    return cleaned
 
 
 @dataclass
@@ -41,6 +63,10 @@ def ocr_words(image: Image, lang: str = "eng", min_conf: float = 0.0) -> list[Wo
         text = data["text"][i]
         if not text or not text.strip():
             continue
+        sanitized = _sanitize_word(text)
+        if sanitized is None:
+            continue
+        text = sanitized
         try:
             conf = float(data["conf"][i])
         except (ValueError, TypeError):
