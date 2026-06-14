@@ -24,6 +24,16 @@ Without a hint, the script searches forward from where the previous TOC entry wa
 found, so listing entries in reading order usually picks the right occurrences
 naturally. If a heading still resolves to the wrong place, add an `@ N` hint.
 
+Display title vs. search string: the text on the `#` line is what shows in the
+outline. If you want a *shortened* outline label but still need a reliable match
+in the body text, put the exact body wording in brackets on the line below:
+
+    ## c. Observation (relation to immediate actuality)
+    [c. Observation of the relation of self-consciousness to its immediate actuality. Physiognomy and phrenology]
+
+The `[...]` line is the search string; the `##` line is the label shown in the
+outline. Without a `[...]` line the title is used for both.
+
 Usage:
     python add_outline.py outline.md input_OCR.pdf input_OCR_outlined.pdf
 """
@@ -44,11 +54,16 @@ class TocEntry:
     title: str
     level: int  # 1-based: 1 = '#', 2 = '##', etc.
     page_hint: int | None = None  # 1-based page hint
+    search_text: str | None = None  # exact body wording to match (defaults to title)
     found_page: int | None = None  # 0-based page index
     found_y: float | None = None
 
+    def needle(self) -> str:
+        return self.search_text if self.search_text is not None else self.title
+
 
 _ENTRY_RE = re.compile(r"^(#+)\s+(.+?)(?:\s+@\s+(\d+))?\s*$")
+_SEARCH_RE = re.compile(r"^\s*\[(.+)\]\s*$")
 
 
 def parse_toc(text: str) -> list[TocEntry]:
@@ -56,6 +71,12 @@ def parse_toc(text: str) -> list[TocEntry]:
     entries: list[TocEntry] = []
     for line in text.splitlines():
         if not line.strip() or line.lstrip().startswith("//"):
+            continue
+        # A [exact search string] line overrides the search needle for the entry
+        # immediately above it, leaving the displayed title untouched.
+        search = _SEARCH_RE.match(line.rstrip())
+        if search and entries:
+            entries[-1].search_text = search.group(1).strip()
             continue
         m = _ENTRY_RE.match(line.rstrip())
         if not m:
@@ -105,6 +126,9 @@ def find_heading(reader: PdfReader, heading: str, start_page: int = 0):
     needle = _normalize(heading)
     if not needle:
         return None
+    # Forward window grows with the needle so long (e.g. shortened-label) search
+    # strings that span many short text-shows still get fully accumulated.
+    window = max(20, len(needle.split()) * 3)
     for page_idx in range(start_page, len(reader.pages)):
         shows = _page_text_shows(reader.pages[page_idx])
         for i in range(len(shows)):
@@ -113,7 +137,7 @@ def find_heading(reader: PdfReader, heading: str, start_page: int = 0):
             # Pull in following shows until we have enough characters to match `needle`
             while (
                 len(_normalize(accumulated)) < len(needle)
-                and j + 1 < min(i + 20, len(shows))
+                and j + 1 < min(i + window, len(shows))
             ):
                 j += 1
                 accumulated = accumulated + " " + shows[j][0]
@@ -152,10 +176,10 @@ def main() -> int:
         # Search forward from the cursor, unless the user gave a page hint.
         start = (entry.page_hint - 1) if entry.page_hint else cursor_page
         start = max(0, min(start, len(reader.pages) - 1))
-        result = find_heading(reader, entry.title, start_page=start)
+        result = find_heading(reader, entry.needle(), start_page=start)
         # If the hint missed, sweep the whole PDF as a fallback.
         if result is None and entry.page_hint is not None:
-            result = find_heading(reader, entry.title, start_page=0)
+            result = find_heading(reader, entry.needle(), start_page=0)
         if result is None:
             missing.append(entry.title)
             continue
