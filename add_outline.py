@@ -155,6 +155,14 @@ def main() -> int:
     parser.add_argument("toc", help="Path to the markdown-style TOC file")
     parser.add_argument("input", help="Input PDF (typically the OCR'd one)")
     parser.add_argument("output", help="Output PDF with outline added")
+    parser.add_argument(
+        "--body-start",
+        type=int,
+        default=1,
+        help="1-based page where the book's body starts. Headings won't be "
+        "located on pages before this — stops 'Self-Consciousness' etc. from "
+        "resolving to the book's own contents pages. Default 1 (search whole PDF).",
+    )
     args = parser.parse_args()
 
     with open(args.toc, encoding="utf-8") as handle:
@@ -167,19 +175,22 @@ def main() -> int:
     writer = PdfWriter()
     writer.append_pages_from_reader(reader)
 
+    body_start = max(0, args.body_start - 1)
     parent_stack: list[tuple[int, object | None]] = [(0, None)]
-    cursor_page = 0
+    cursor_page = body_start
     found = 0
     missing: list[str] = []
 
     for entry in entries:
         # Search forward from the cursor, unless the user gave a page hint.
         start = (entry.page_hint - 1) if entry.page_hint else cursor_page
+        # Body-start floor keeps headings out of the printed TOC region.
+        start = max(body_start, start)
         start = max(0, min(start, len(reader.pages) - 1))
         result = find_heading(reader, entry.needle(), start_page=start)
-        # If the hint missed, sweep the whole PDF as a fallback.
+        # If the hint missed, sweep from body_start as a fallback.
         if result is None and entry.page_hint is not None:
-            result = find_heading(reader, entry.needle(), start_page=0)
+            result = find_heading(reader, entry.needle(), start_page=body_start)
         if result is None:
             missing.append(entry.title)
             continue
