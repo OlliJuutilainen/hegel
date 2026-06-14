@@ -1,29 +1,30 @@
 #!/usr/bin/env python3
 """Build outline.md draft from the printed TOC pages of a text-layered PDF.
 
-Same idea as parse_printed_toc.py — cluster TOC lines by (prefix class,
-indent) and rank them — but reads from the PDF's existing text layer
-instead of rasterizing + OCRing the page. Faster, and typographically
-cleaner: no roman-numeral OCR misreads, no footnote-marker contamination,
-no font-size guesswork.
+Reads the printed table-of-contents straight from the PDF's existing text
+layer (via pypdf's text-show visitor) instead of rasterizing + OCRing —
+faster and typographically cleaner.
 
-Use this when:
-  - your PDF already has a text layer (e.g. you've run run_tesseract.py)
-  - and its printed table-of-contents pages carry more detail than the
-    EPUB's nav (sub-sections, lettered subdivisions, greek subsubsections)
+Hierarchy is driven by INDENTATION, not by the numbering prefix. In a
+printed TOC the visual left margin is the authoritative signal of nesting
+depth: Hegel's contents page puts 'A. Consciousness', '(BB.) Spirit' and
+'Preface' all at the same flush-left margin (= top level) even though their
+prefixes differ wildly, while 'A. Observing reason' sits indented under
+'V.' as a sub-sub-entry. So we cluster lines by indent and rank the
+clusters left-to-right; each indent cluster is one '#' level. Nothing is
+hardcoded to a particular book.
 
-The text layer feeds the same hierarchy logic as parse_printed_toc.py:
-each line gets (prefix_class, indent_bucket); styles are ordered by indent
-ascending, with prefix-class rank as tiebreaker. Nothing is hardcoded to
-a particular book's scheme.
+The numbering prefix is still used for two things: dropping prose-summary
+lines (which carry no prefix and are long / full of page refs), and
+cleaning up roman numerals the OCR mangled in the title text ('VL.' -> 'VI.').
 
-Lines without a recognized numbering prefix (chapter titles like 'Preface',
-'Introduction', and any prose-summary noise) are still emitted with their
-indent-derived level — review the draft by hand and drop the noise rows.
+Use this when your PDF already has a text layer and its printed TOC carries
+more detail than the EPUB nav (lettered subsections, greek subsubsections).
 
 Usage:
     python pdf_outline.py inwood2.pdf --toc-pages 25-27 > outline.md
-    python pdf_outline.py inwood2.pdf --toc-pages 25-27 --indent-bucket 12
+    python pdf_outline.py inwood2.pdf --toc-pages 25-27 --indent-gap 6
+    python pdf_outline.py inwood2.pdf --toc-pages 25-27 --keep-prose
 """
 
 from __future__ import annotations
@@ -31,23 +32,45 @@ from __future__ import annotations
 import argparse
 import re
 import sys
-from collections import defaultdict
 from dataclasses import dataclass
 
 from pypdf import PdfReader
 
 
-# Numbering prefix classification. Same shape labels as parse_printed_toc.py;
-# the level each maps to is learned from the document, not hardcoded.
+# Tesseract systematically mangles roman numerals in the text layer; normalize
+# the leading token (with or without the trailing dot the OCR sometimes drops)
+# so the title reads cleanly. Longest patterns first. We do NOT touch a bare
+# '1.' (ambiguous with arabic) — only the L-contaminated forms.
+_ROMAN_FIXUPS = [
+    (re.compile(r"^VIIL\.?\s*"), "VIII. "),
+    (re.compile(r"^VIL\.?\s*"), "VII. "),
+    (re.compile(r"^VL\.?\s*"), "VI. "),
+    (re.compile(r"^I11\.?\s*"), "III. "),
+    (re.compile(r"^II1\.?\s*"), "III. "),
+    (re.compile(r"^IL\.?\s*"), "II. "),
+    (re.compile(r"^L\.\s*"), "I. "),
+]
+
+
+def _fix_roman_prefix(text: str) -> str:
+    for pat, sub in _ROMAN_FIXUPS:
+        new = pat.sub(sub, text, count=1)
+        if new != text:
+            return new
+    return text
+
+
+# Numbering-prefix classification — used only for prose detection, not leveling.
+# Trailing space/dot not required (OCR drops it: 'A.Independence', 'VIL Religion').
 _PREFIX_PATTERNS = [
     ("paren_double_upper", re.compile(r"^\(([A-Z])\1\.\)")),
     ("paren_double_lower", re.compile(r"^\(([a-z])\1\.\)")),
-    ("arabic_dotted",      re.compile(r"^\d+\.\d+(?:\.\d+)*(?:\s|$)")),
-    ("arabic",             re.compile(r"^\d+\.(?:\s|$)")),
-    ("roman",              re.compile(r"^[IVX]+\.(?:\s|$)")),
-    ("letter_upper",       re.compile(r"^[A-Z]\.(?:\s|$)")),
-    ("letter_lower",       re.compile(r"^[a-z]\.(?:\s|$)")),
-    ("greek_lower",        re.compile(r"^[αβγδεζηθικ]\.(?:\s|$)")),
+    ("arabic_dotted",      re.compile(r"^\d+\.\d+")),
+    ("arabic",             re.compile(r"^\d+\.")),
+    ("roman",              re.compile(r"^[IVX]+\.")),
+    ("letter_upper",       re.compile(r"^[A-Z]\.")),
+    ("letter_lower",       re.compile(r"^[a-z]\.")),
+    ("greek_lower",        re.compile(r"^[αβγδεζηθικ]\.")),
 ]
 
 
@@ -58,7 +81,10 @@ def _classify_prefix(text: str) -> str:
     return "none"
 
 
+# A trailing page number on a TOC line ('Sensory Certainty 27', 'title ... 27').
 _PAGE_NUMBER_RE = re.compile(r"\s+\.{0,}\s*(\d{1,4})\s*$")
+# Inline parenthesized page refs scattered through a prose summary ('(8)', '(33)').
+_PAGE_REF_RE = re.compile(r"\(\d+\)")
 
 
 def _split_page_number(text: str) -> tuple[str, int | None]:
@@ -77,6 +103,24 @@ class TocLine:
     prefix: str
 
 
+def _is_prose(line: TocLine, min_words: int) -> bool:
+    """Prefix-less summary text rather than a heading.
+
+    Real prefix-less headings ('Preface', 'Introduction', short chapter titles)
+    are kept; long prose or anything sprinkled with parenthesized page refs is
+    dropped. Numbered headings (any prefix) are never treated as prose.
+    """
+    if line.prefix != "none":
+        return False
+    if _PAGE_REF_RE.search(line.text):
+        return True
+    return len(line.text.split()) >= min_words
+
+
+def _is_toc_title(line: TocLine) -> bool:
+    return line.text.strip().lower() in {"contents", "table of contents"}
+
+
 def parse_page_range(spec: str) -> list[int]:
     if "-" in spec:
         a, b = spec.split("-", 1)
@@ -85,7 +129,7 @@ def parse_page_range(spec: str) -> list[int]:
 
 
 def collect_from_text_layer(pdf_path: str, pages: list[int], y_tol: float) -> list[TocLine]:
-    """Read TOC pages from the PDF text layer; group shows into lines, return TocLines."""
+    """Read TOC pages from the PDF text layer; group shows into lines."""
     reader = PdfReader(pdf_path)
     out: list[TocLine] = []
     for page_no in pages:
@@ -107,8 +151,7 @@ def collect_from_text_layer(pdf_path: str, pages: list[int], y_tol: float) -> li
         if not shows:
             continue
 
-        # Group shows into lines by y-coordinate (within y_tol).
-        # Same baseline may be split across many Tj ops with small jitter.
+        # Group shows into lines by shared baseline y (within y_tol).
         lines: list[list[tuple[str, float, float]]] = []
         for text, x, y in shows:
             for line in lines:
@@ -118,7 +161,7 @@ def collect_from_text_layer(pdf_path: str, pages: list[int], y_tol: float) -> li
             else:
                 lines.append([(text, x, y)])
 
-        # PDF coords: y increases upward, so descending y = top-to-bottom reading.
+        # PDF y increases upward; descending y = top-to-bottom reading order.
         lines.sort(key=lambda ln: -ln[0][2])
         for line in lines:
             line.sort(key=lambda s: s[1])
@@ -126,60 +169,52 @@ def collect_from_text_layer(pdf_path: str, pages: list[int], y_tol: float) -> li
             if not text:
                 continue
             text, page_hint = _split_page_number(text)
+            text = _fix_roman_prefix(text)
             if not text:
                 continue
             indent = min(s[1] for s in line)
-            prefix = _classify_prefix(text)
             out.append(
-                TocLine(text=text, page_hint=page_hint, indent=indent, prefix=prefix)
+                TocLine(
+                    text=text,
+                    page_hint=page_hint,
+                    indent=indent,
+                    prefix=_classify_prefix(text),
+                )
             )
     return out
 
 
-def _bucket(value: float, size: float) -> int:
-    return int(value // size)
+def assign_levels(lines: list[TocLine], indent_gap: float) -> dict[float, int]:
+    """Cluster the distinct indents agglomeratively and rank them left-to-right.
+
+    Each cluster (a group of indents no more than `indent_gap` apart) is one
+    nesting level. Small jitter within a level collapses; the clear horizontal
+    gap between levels separates them. Returns {rounded_indent: level}.
+    """
+    uniq = sorted({round(l.indent, 1) for l in lines})
+    mapping: dict[float, int] = {}
+    level = 0
+    prev: float | None = None
+    for x in uniq:
+        if prev is None or (x - prev) > indent_gap:
+            level += 1
+        mapping[x] = level
+        prev = x
+    return mapping
 
 
-# Tiebreaker when indent already matches between two styles. Generic typographic
-# convention (parens-doubled is more major than roman, roman than upper letter,
-# etc.) — not a book-specific scheme.
-_PREFIX_RANK = {
-    "paren_double_upper": 0,
-    "paren_double_lower": 0,
-    "arabic_dotted": 2,
-    "arabic": 3,
-    "roman": 4,
-    "letter_upper": 5,
-    "letter_lower": 6,
-    "greek_lower": 7,
-    "none": 50,
-}
+def _level_of(line: TocLine, mapping: dict[float, int]) -> int:
+    return mapping[round(line.indent, 1)]
 
 
-def assign_levels(lines: list[TocLine], indent_bucket: float) -> dict[tuple, int]:
-    styles: dict[tuple, list[TocLine]] = defaultdict(list)
-    for line in lines:
-        key = (line.prefix, _bucket(line.indent, indent_bucket))
-        styles[key].append(line)
-    ordered = sorted(
-        styles.keys(),
-        key=lambda k: (k[1], _PREFIX_RANK.get(k[0], 50)),
-    )
-    return {k: i + 1 for i, k in enumerate(ordered)}
-
-
-def render_outline(
-    lines: list[TocLine], levels: dict[tuple, int], indent_bucket: float
-) -> str:
+def render_outline(lines: list[TocLine], mapping: dict[float, int]) -> str:
     out = [
         "// Draft outline from PDF text-layer TOC via pdf_outline.py.",
-        "// Hierarchy from indent + numbering prefix; review by hand.",
-        "// Drop prose-summary lines that aren't real headings before add_outline.py.",
+        "// Levels come from indentation depth; review by hand before add_outline.py.",
         "",
     ]
     for line in lines:
-        key = (line.prefix, _bucket(line.indent, indent_bucket))
-        level = levels[key]
+        level = _level_of(line, mapping)
         hint = f" @ {line.page_hint}" if line.page_hint else ""
         out.append(f"{'#' * level} {line.text}{hint}")
     return "\n".join(out) + "\n"
@@ -194,10 +229,11 @@ def main() -> int:
         help="Page range covering the printed TOC, e.g. 25-27 or 25.",
     )
     p.add_argument(
-        "--indent-bucket",
+        "--indent-gap",
         type=float,
-        default=8.0,
-        help="PDF-user-unit bucket for grouping similar indents. Default 8.",
+        default=6.0,
+        help="Min horizontal gap (PDF units) that separates two nesting levels. "
+        "Raise if distinct levels get merged, lower if one level splits. Default 6.",
     )
     p.add_argument(
         "--y-tol",
@@ -205,15 +241,30 @@ def main() -> int:
         default=3.0,
         help="Y-coord tolerance for grouping text-shows into one line. Default 3.",
     )
+    p.add_argument(
+        "--prose-min-words",
+        type=int,
+        default=10,
+        help="Prefix-less lines with at least this many words are treated as "
+        "prose summaries and dropped. Default 10.",
+    )
+    p.add_argument(
+        "--keep-prose",
+        action="store_true",
+        help="Disable prose-summary filtering (keep every line).",
+    )
     args = p.parse_args()
 
     pages = parse_page_range(args.toc_pages)
     lines = collect_from_text_layer(args.input, pages, args.y_tol)
+    lines = [l for l in lines if not _is_toc_title(l)]
+    if not args.keep_prose:
+        lines = [l for l in lines if not _is_prose(l, args.prose_min_words)]
     if not lines:
         print("No TOC lines found.", file=sys.stderr)
         return 1
-    levels = assign_levels(lines, args.indent_bucket)
-    print(render_outline(lines, levels, args.indent_bucket))
+    mapping = assign_levels(lines, args.indent_gap)
+    print(render_outline(lines, mapping))
     return 0
 
 
