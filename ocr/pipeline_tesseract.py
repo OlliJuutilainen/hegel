@@ -13,7 +13,7 @@ from .overlay import (
     build_positioned_overlay_page,
     get_text_font,
 )
-from .tesseract_ocr import ocr_words
+from .tesseract_ocr import is_margin_ref, ocr_words
 
 
 @dataclass
@@ -27,6 +27,9 @@ class Settings:
     # page instead, which preserves source bytes but keeps the corrupt layer alongside ours.
     rasterize: bool = True
     jpeg_quality: int = 85
+    # Drop Akademie-Ausgabe-style margin references ([4:408]) from the text layer so
+    # they don't get copied along with selected body text. The page image is unaffected.
+    drop_margin_refs: bool = False
 
 
 def run(
@@ -54,6 +57,8 @@ def run(
         try:
             image = render.render_page(input_pdf, page_no, settings.dpi)
             words = ocr_words(image, lang=settings.lang, min_conf=settings.min_conf)
+            if settings.drop_margin_refs:
+                words = [w for w in words if not is_margin_ref(w.text)]
         except Exception as exc:  # one bad page must not abort the whole run
             failures.append((page_no, repr(exc)))
 

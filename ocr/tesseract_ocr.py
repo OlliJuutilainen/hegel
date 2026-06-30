@@ -40,6 +40,17 @@ def _sanitize_word(text: str) -> str | None:
     return cleaned
 
 
+# Akademie-Ausgabe-style margin reference: [volume:page], e.g. '[4:408]'. These
+# print in the page margin and never occur in real body text, so they can be
+# dropped from the text layer (the page image still shows them) to keep copied
+# selections clean. Tolerant of a dropped closing bracket and OCR'd ':' as ';'/'.'.
+_MARGIN_REF = re.compile(r"^\[\d{1,3}[:;.]\d{1,4}\]?$")
+
+
+def is_margin_ref(text: str) -> bool:
+    return bool(_MARGIN_REF.match(text.strip()))
+
+
 @dataclass
 class Word:
     text: str

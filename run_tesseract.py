@@ -52,6 +52,13 @@ def main() -> int:
         default=85,
         help="JPEG quality for the rebuilt page background (default: 85). Ignored with --no-rasterize.",
     )
+    parser.add_argument(
+        "--drop-margin-refs",
+        action="store_true",
+        help="Drop Akademie-Ausgabe-style margin references like '[4:408]' from the "
+        "text layer so they aren't copied with selected body text. The page image "
+        "still shows them.",
+    )
     args = parser.parse_args()
 
     if shutil.which("tesseract") is None:
@@ -70,6 +77,7 @@ def main() -> int:
         font_file=args.font_file,
         rasterize=not args.no_rasterize,
         jpeg_quality=args.jpeg_quality,
+        drop_margin_refs=args.drop_margin_refs,
     )
     failures = run(args.input, args.output, settings, text_sidecar=args.text_out)
 
