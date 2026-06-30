@@ -13,6 +13,7 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import os
 import shutil
 import sys
 
@@ -37,7 +38,15 @@ def main() -> int:
         "--font-file", default=None, help="Path to a Unicode TTF for the text layer"
     )
     parser.add_argument(
-        "--text-out", default=None, help="Optional path to also dump the plain transcription"
+        "--text-out",
+        default=None,
+        help="Path for the plain-text transcription. Default: the output PDF's name "
+        "with a .txt extension. Use --no-text-out to skip it.",
+    )
+    parser.add_argument(
+        "--no-text-out",
+        action="store_true",
+        help="Don't write the plain-text transcription sidecar.",
     )
     parser.add_argument(
         "--no-rasterize",
@@ -89,7 +98,16 @@ def main() -> int:
         drop_margin_refs=args.drop_margin_refs,
         psm=args.psm,
     )
-    failures = run(args.input, args.output, settings, text_sidecar=args.text_out)
+    # Plain-text sidecar is written by default (next to the output PDF) unless
+    # suppressed; --text-out overrides its location.
+    if args.no_text_out:
+        text_sidecar = None
+    elif args.text_out:
+        text_sidecar = args.text_out
+    else:
+        text_sidecar = os.path.splitext(args.output)[0] + ".txt"
+
+    failures = run(args.input, args.output, settings, text_sidecar=text_sidecar)
 
     if failures:
         print(f"\nDone, but {len(failures)} page(s) failed:", file=sys.stderr)
@@ -97,6 +115,8 @@ def main() -> int:
             print(f"  page {page_no}: {err}", file=sys.stderr)
         return 2
     print(f"\nDone. Wrote {args.output}")
+    if text_sidecar is not None:
+        print(f"Plain text: {text_sidecar}")
     return 0
 
 

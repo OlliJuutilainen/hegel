@@ -12,6 +12,7 @@ from .overlay import (
     build_image_page_with_text,
     build_positioned_overlay_page,
     get_text_font,
+    page_clean_text,
 )
 from .tesseract_ocr import is_margin_ref, ocr_words
 
@@ -85,7 +86,7 @@ def run(
 
         if text_sidecar is not None:
             sidecar_parts.append(
-                f"\n\n===== PAGE {page_no} =====\n" + " ".join(w.text for w in words)
+                f"\n\n===== PAGE {page_no} =====\n" + page_clean_text(words)
             )
 
     with open(output_pdf, "wb") as handle:

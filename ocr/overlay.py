@@ -194,6 +194,19 @@ def _paragraph_actualtext(lines) -> str:
     return _normalize_text(out)
 
 
+def page_clean_text(words) -> str:
+    """Clean, de-hyphenated, paragraph-separated text for a page's OCR words.
+
+    Same grouping and de-hyphenation as the invisible layer's /ActualText, so the
+    plain-text sidecar reads exactly like a reader that honours /ActualText would
+    copy it: flowing paragraphs, soft hyphens absorbed, em dashes normalized.
+    Paragraphs are separated by a blank line.
+    """
+    paragraphs = _group_by_paragraph(words)
+    chunks = [_paragraph_actualtext(p) for p in paragraphs]
+    return "\n\n".join(c for c in chunks if c.strip())
+
+
 def _actualtext_hex(s: str) -> str:
     """Encode a string as a UTF-16BE PDF hex string body with BOM, for /ActualText."""
     return "FEFF" + s.encode("utf-16-be").hex().upper()
