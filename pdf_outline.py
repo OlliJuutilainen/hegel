@@ -118,7 +118,14 @@ def _is_prose(line: TocLine, min_words: int) -> bool:
 
 
 def _is_toc_title(line: TocLine) -> bool:
-    return line.text.strip().lower() in {"contents", "table of contents"}
+    return line.text.strip().lower() in {
+        "contents",
+        "table of contents",
+        "sisällys",
+        "sisällysluettelo",
+        "inhalt",
+        "table des matières",
+    }
 
 
 def parse_page_range(spec: str) -> list[int]:
