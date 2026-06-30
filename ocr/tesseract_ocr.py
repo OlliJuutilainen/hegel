@@ -65,8 +65,18 @@ class Word:
     word_num: int = 0
 
 
-def ocr_words(image: Image, lang: str = "eng", min_conf: float = 0.0) -> list[Word]:
-    data = pytesseract.image_to_data(image, lang=lang, output_type=Output.DICT)
+def ocr_words(
+    image: Image, lang: str = "eng", min_conf: float = 0.0, psm: int | None = None
+) -> list[Word]:
+    # psm = Tesseract page segmentation mode. Default (None -> 3) does full layout
+    # analysis, which can drop a body line into the gap between two auto-detected
+    # blocks on a single-column page with a margin note. psm 4 ("single column of
+    # variable sizes") or 6 ("single uniform block") avoids those block-boundary
+    # drops on plain book pages.
+    config = f"--psm {psm}" if psm is not None else ""
+    data = pytesseract.image_to_data(
+        image, lang=lang, config=config, output_type=Output.DICT
+    )
     words: list[Word] = []
     for i in range(len(data["text"])):
         if int(data["level"][i]) != _WORD_LEVEL:

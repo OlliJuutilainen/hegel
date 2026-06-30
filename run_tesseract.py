@@ -59,6 +59,15 @@ def main() -> int:
         "text layer so they aren't copied with selected body text. The page image "
         "still shows them.",
     )
+    parser.add_argument(
+        "--psm",
+        type=int,
+        default=None,
+        help="Tesseract page segmentation mode. Default (3) does full layout "
+        "analysis but can drop a line between auto-detected blocks on a "
+        "single-column page. Try 4 (single column, variable sizes) or 6 (single "
+        "uniform block) for plain book pages.",
+    )
     args = parser.parse_args()
 
     if shutil.which("tesseract") is None:
@@ -78,6 +87,7 @@ def main() -> int:
         rasterize=not args.no_rasterize,
         jpeg_quality=args.jpeg_quality,
         drop_margin_refs=args.drop_margin_refs,
+        psm=args.psm,
     )
     failures = run(args.input, args.output, settings, text_sidecar=args.text_out)
 

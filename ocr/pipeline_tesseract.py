@@ -30,6 +30,9 @@ class Settings:
     # Drop Akademie-Ausgabe-style margin references ([4:408]) from the text layer so
     # they don't get copied along with selected body text. The page image is unaffected.
     drop_margin_refs: bool = False
+    # Tesseract page segmentation mode (None -> Tesseract default 3). Use 4 or 6 for
+    # single-column book pages where mode 3 occasionally drops a line between blocks.
+    psm: int | None = None
 
 
 def run(
@@ -56,7 +59,9 @@ def run(
         image = None
         try:
             image = render.render_page(input_pdf, page_no, settings.dpi)
-            words = ocr_words(image, lang=settings.lang, min_conf=settings.min_conf)
+            words = ocr_words(
+                image, lang=settings.lang, min_conf=settings.min_conf, psm=settings.psm
+            )
             if settings.drop_margin_refs:
                 words = [w for w in words if not is_margin_ref(w.text)]
         except Exception as exc:  # one bad page must not abort the whole run
