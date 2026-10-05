@@ -8,6 +8,11 @@ leaves the original page images untouched. English only by default.
 Usage:
     python run_tesseract.py input.pdf output.pdf
     python run_tesseract.py input.pdf out.pdf --dpi 300 --text-out text.txt
+    python run_tesseract.py scan.pdf out.pdf --drop-running-heads   # book pages
+
+Book pages: footnote reference markers are stripped from the body text, footnotes
+stay separate paragraphs, and the running head (title in capitals + page number) is
+never glued onto the first paragraph. --drop-running-heads leaves it out entirely.
 """
 
 from __future__ import annotations
@@ -52,6 +57,12 @@ def main() -> int:
         default=85,
         help="JPEG quality for the rebuilt page background (default: 85). Ignored with --no-rasterize.",
     )
+    parser.add_argument(
+        "--drop-running-heads",
+        action="store_true",
+        help="Leave each page's running head (book/chapter title, page number) out of the "
+        "text layer, so copying across a page break gives clean prose.",
+    )
     args = parser.parse_args()
 
     if shutil.which("tesseract") is None:
@@ -70,6 +81,7 @@ def main() -> int:
         font_file=args.font_file,
         rasterize=not args.no_rasterize,
         jpeg_quality=args.jpeg_quality,
+        drop_running_heads=args.drop_running_heads,
     )
     failures = run(args.input, args.output, settings, text_sidecar=args.text_out)
 

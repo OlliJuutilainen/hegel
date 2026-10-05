@@ -9,6 +9,9 @@ from tqdm import tqdm
 
 from . import render
 from .overlay import (
+    _dehyphenate_lines,
+    _group_by_paragraph,
+    _paragraph_actualtext,
     build_image_page_with_text,
     build_positioned_overlay_page,
     get_text_font,
@@ -27,6 +30,8 @@ class Settings:
     # page instead, which preserves source bytes but keeps the corrupt layer alongside ours.
     rasterize: bool = True
     jpeg_quality: int = 85
+    # Leave the running head (book/chapter title + page number) out of the text layer.
+    drop_running_heads: bool = False
 
 
 def run(
@@ -60,13 +65,25 @@ def run(
         if settings.rasterize and image is not None:
             # Rebuild from scratch — drops any pre-existing text layer entirely.
             new_page = build_image_page_with_text(
-                image, words, page_w, page_h, font=font, jpeg_quality=settings.jpeg_quality
+                image,
+                words,
+                page_w,
+                page_h,
+                font=font,
+                jpeg_quality=settings.jpeg_quality,
+                drop_running_heads=settings.drop_running_heads,
             )
             writer.add_page(new_page)
         elif words and image is not None:
             # Legacy: merge onto the original page (keeps pre-existing text alongside ours).
             overlay = build_positioned_overlay_page(
-                words, image.size[0], image.size[1], page_w, page_h, font=font
+                words,
+                image.size[0],
+                image.size[1],
+                page_w,
+                page_h,
+                font=font,
+                drop_running_heads=settings.drop_running_heads,
             )
             page.merge_page(overlay)
             writer.add_page(page)
@@ -74,8 +91,10 @@ def run(
             writer.add_page(page)
 
         if text_sidecar is not None:
+            paragraphs = _group_by_paragraph(words, settings.drop_running_heads)
             sidecar_parts.append(
-                f"\n\n===== PAGE {page_no} =====\n" + " ".join(w.text for w in words)
+                f"\n\n===== PAGE {page_no} =====\n"
+                + "\n\n".join(_paragraph_actualtext(_dehyphenate_lines(p)) for p in paragraphs)
             )
 
     with open(output_pdf, "wb") as handle:
