@@ -574,11 +574,12 @@ def jstor_front_matter(page: Page) -> dict | None:
 
 
 def _yaml_front_matter(meta: dict) -> str:
+    """iA Writer metadata: '---', plain 'key: value' lines, '---' (no quoting — iA
+    would show quotes as part of the value in [%title])."""
     lines = ["---"]
     for key in ("title", "author", "source", "publisher", "url"):
         if key in meta:
-            value = meta[key].replace('"', '\\"')
-            lines.append(f'{key}: "{value}"')
+            lines.append(f"{key}: {' '.join(meta[key].split())}")
     lines.append("---")
     return "\n".join(lines)
 
@@ -1019,7 +1020,11 @@ def _join_rows(rows: list[Row], vocab, marks: dict[int, str] | None = None) -> l
 
 
 def _escape(text: str) -> str:
-    return re.sub(r"([\\*_`])", r"\\\1", text)
+    """Backslash the characters that mean something in Markdown — including iA Writer's
+    extras: ~sub~, ^sup^, ==highlight==, $math$, and [^ / [# / [% references."""
+    text = re.sub(r"([\\*_`~^$])", r"\\\1", text)
+    text = text.replace("==", "\\=\\=")
+    return re.sub(r"\[(?=[\^#%])", r"\\[", text)
 
 
 def _wrap(text: str, italic: bool, bold: bool) -> str:
@@ -1037,7 +1042,7 @@ def _wrap(text: str, italic: bool, bold: bool) -> str:
 
 def render_inline(glyphs: list[Glyph], footnote_ids: dict[str, int]) -> str:
     """Glyph stream -> Markdown inline text with emphasis and footnote references."""
-    # Turn runs of superscript glyphs into footnote references (or <sup> if unmatched).
+    # Turn runs of superscript glyphs into footnote references (or iA's ^sup^ if unmatched).
     items: list[Glyph] = []
     i = 0
     while i < len(glyphs):
@@ -1053,7 +1058,7 @@ def render_inline(glyphs: list[Glyph], footnote_ids: dict[str, int]) -> str:
             if note is not None:
                 items.append(Glyph(f"[^{note}]", marker=label))
             elif label != "?":
-                items.append(Glyph(f"<sup>{label}</sup>", marker=label))
+                items.append(Glyph(f"^{label}^", marker=label))
             continue
         items.append(g)
         i += 1
@@ -1106,8 +1111,9 @@ def render_inline(glyphs: list[Glyph], footnote_ids: dict[str, int]) -> str:
 
 
 def _escape_block_start(text: str) -> str:
-    """Keep a paragraph that happens to open like Markdown syntax from turning into it."""
-    if re.match(r"^(#{1,6}\s|>|[-+*]\s)", text):
+    """Keep a paragraph that happens to open like Markdown syntax from turning into it
+    (in iA Writer also '//' comments, '/file' content blocks and '+++' page breaks)."""
+    if re.match(r"^(#{1,6}\s|>|[-+*]\s|/|\+\+\+|\{\{)", text):
         return "\\" + text
     return re.sub(r"^(\d+)([.)]\s)", r"\1\\\2", text)
 
@@ -1309,7 +1315,10 @@ def to_markdown(pages: list[Page], page_markers: bool = False) -> str:
                 text = _roman_heading(b.rows[0])
             else:
                 text = render_inline(glyphs, ids)
-            parts.append("#" * b.level + " " + _block_text_fixups(text, b, meta))
+            text = _block_text_fixups(text, b, meta)
+            # iA Writer reads a heading's closing '[...]' as a cross-reference label.
+            text = re.sub(r"\[([^\]]*)\]$", r"\\[\1]", text)
+            parts.append("#" * b.level + " " + text)
         elif b.kind == "quote":
             parts.append("> " + _escape_block_start(_tidy(render_inline(glyphs, ids), ocr)))
         elif b.kind == "item" and re.match(r"^\d{1,2}\s?\.", b.rows[0].plain_text):

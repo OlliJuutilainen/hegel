@@ -60,6 +60,9 @@ OCR layer the PDF already carries. Both kinds can sit in one file.
 - Scans take a few seconds per page (`--dpi 300` is faster, `--no-ocr` skips OCR and
   uses the PDF's own layer). The OCR vote uses the system word list
   (`/usr/share/dict/words` on macOS); `--dictionary` points to another one.
+- Output follows iA Writer's Markdown: metadata as plain `key: value` lines between
+  `---`, footnotes as `[^1]`, unmatched superscripts as `^x^`, and characters iA gives
+  a meaning (`~ ^ $ ==`, a leading `//`, `/` or `+++`) are backslash-escaped.
 - DRM-protected PDFs can't be read.
 
 ## Other tools
