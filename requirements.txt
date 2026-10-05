@@ -5,3 +5,4 @@ pillow>=10.4
 pytesseract>=0.3.13
 tqdm>=4.66
 pdfminer.six>=20231228
+numpy>=1.21
