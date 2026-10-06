@@ -390,22 +390,22 @@ def _emit_paragraph(c, lines, scale_x, scale_y, page_h, font):
 
 
 def build_positioned_overlay_page(
-    words,
+    paragraphs,
     img_w: int,
     img_h: int,
     page_w: float,
     page_h: float,
     *,
     font: str = _FALLBACK_FONT,
-    drop_running_heads: bool = False,
 ) -> PageObject:
-    """Place each OCR paragraph as positioned invisible text wrapped in an /ActualText span."""
+    """Place each OCR paragraph (from _group_by_paragraph) as positioned invisible text
+    wrapped in an /ActualText span."""
     scale_x = page_w / img_w
     scale_y = page_h / img_h
 
     packet = io.BytesIO()
     c = canvas.Canvas(packet, pagesize=(page_w, page_h))
-    for para in _group_by_paragraph(words, drop_running_heads):
+    for para in paragraphs:
         _emit_paragraph(c, para, scale_x, scale_y, page_h, font)
     c.showPage()
     c.save()
@@ -415,17 +415,17 @@ def build_positioned_overlay_page(
 
 def build_image_page_with_text(
     image,
-    words,
+    paragraphs,
     page_w: float,
     page_h: float,
     *,
     font: str = _FALLBACK_FONT,
     jpeg_quality: int = 85,
-    drop_running_heads: bool = False,
 ) -> PageObject:
     """Build a self-contained PDF page from scratch: the rendered scan as background plus our
-    invisible OCR text on top. Any pre-existing (corrupt) text layer in the source PDF is
-    dropped, so text selection picks up only the clean OCR layer.
+    invisible OCR text (paragraphs from _group_by_paragraph) on top. Any pre-existing
+    (corrupt) text layer in the source PDF is dropped, so text selection picks up only the
+    clean OCR layer.
     """
     img_w, img_h = image.size
     scale_x = page_w / img_w
@@ -440,7 +440,7 @@ def build_image_page_with_text(
     packet = io.BytesIO()
     c = canvas.Canvas(packet, pagesize=(page_w, page_h))
     c.drawImage(ImageReader(img_buf), 0, 0, width=page_w, height=page_h)
-    for para in _group_by_paragraph(words, drop_running_heads):
+    for para in paragraphs:
         _emit_paragraph(c, para, scale_x, scale_y, page_h, font)
 
     c.showPage()

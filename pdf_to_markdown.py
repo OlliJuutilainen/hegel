@@ -5,12 +5,14 @@ Two kinds of page, often in one file:
 
   typeset pages (e-books, born-digital articles): the text layer names the font of
       every glyph, so italic and bold come straight from the typesetting;
-  scanned pages (JSTOR, library scans, earlier OCR runs): the page is an image.
-      These are read with Tesseract, cross-checked against any OCR layer the PDF
-      already has, and the image itself supplies what OCR doesn't: italics (from
-      the slant of the strokes), footnote figures and subscripts (from their size
-      and height). Needs the tesseract and poppler programs; slower (a few seconds
-      per page).
+  scanned pages (JSTOR, library scans, photocopies, earlier OCR runs): the page is
+      an image. These are read with Tesseract, cross-checked against any OCR layer
+      the PDF already has, and the image itself supplies what OCR doesn't: italics
+      (from the slant of the strokes), footnote figures and subscripts (from their
+      size and height). A photocopy is prepared first: a sheet holding two book
+      pages is split in two, the copier's black edges and grey shadows are cleared,
+      and tilted pages are straightened (--no-cleanup skips this). Needs the
+      tesseract and poppler programs; slower (a few seconds per page).
 
 Output:
   - italic / bold          -> *italic*, **bold**, ***both***
@@ -194,13 +196,15 @@ class Row:
 
 @dataclass
 class Page:
-    number: int  # 1-based PDF page
+    number: int  # 1-based, in reading order; a two-page spread counts as two
     width: float
     height: float = 0.0
     rows: list[Row] = field(default_factory=list)
     rules: list[tuple[float, float, float]] = field(default_factory=list)  # (x0, x1, y)
     folio: str | None = None  # printed page number, if found
     scanned: bool = False
+    pdf_page: int = 0  # the PDF page it came from
+    part: str = ""  # 'a' / 'b' for the left and right page of a spread
 
 
 def _line_glyphs(line) -> list[Glyph]:
@@ -465,6 +469,7 @@ def extract_pages(
     dpi: int = 400,
     lang: str = "eng",
     lexicon=None,
+    prepare: bool = True,
 ) -> tuple[list[Page], float]:
     """Read the PDF's pages into rows of styled glyphs; also return the share of glyphs
     drawn as invisible text (on pages that were not re-read by OCR)."""
@@ -485,7 +490,8 @@ def extract_pages(
             rules: list = []
             images: list = []
             _walk(layout, lines, rules, images)
-            page = Page(number=page_no, width=layout.width, height=layout.height, rules=rules)
+            page = Page(number=page_no, width=layout.width, height=layout.height, rules=rules,
+                        pdf_page=page_no)
             image = _scan_image(images, layout.width, layout.height)
             if image is not None and ocr:
                 # Keep the page's own OCR layer (text inside the scan) for the vote;
@@ -508,9 +514,11 @@ def extract_pages(
     if scans:
         from pdf2image import convert_from_path
 
+        from ocr.preprocess import Region, prepare_scan
         from ocr.scanpage import Lexicon, read_scan_page
 
         lexicon = lexicon or Lexicon()
+        halves: dict[int, Page] = {}  # the right-hand page of a split spread, by left page
         for n, (page, image, layer) in enumerate(scans, 1):
             print(f"  OCR page {page.number} ({n}/{len(scans)})…", file=sys.stderr, flush=True)
             rendered = convert_from_path(path, dpi=dpi, first_page=page.number,
@@ -521,14 +529,67 @@ def extract_pages(
                 int(image[0] * s_x), int((page.height - image[3]) * s_y),
                 int(image[2] * s_x), int((page.height - image[1]) * s_y),
             ))
-            scan = read_scan_page(crop, (image[0], image[3]), dpi, layer, lexicon, lang=lang)
-            rows = _rows_from_scan(scan, page.number)
-            for frame, group in _column_groups(rows, lambda r: (r.x0, r.x1, r.top, r.bottom)):
-                for row in sorted(group, key=lambda r: -r.top):
-                    row.frame = frame
-                    page.rows.append(row)
-            page.rules = scan.rules
+            # Two-page spreads are read as two pages; copier shadows and skew are
+            # taken out first. A clean, level single page passes through untouched.
+            if prepare:
+                regions = prepare_scan(crop, dpi)
+            else:
+                regions = [Region(crop.convert("L"), crop.convert("L"), 0, 0.0)]
+            targets = [page]
+            if len(regions) == 2:
+                page.part = "a"
+                right = Page(number=page.number, width=page.width, height=page.height,
+                             scanned=True, pdf_page=page.pdf_page, part="b")
+                halves[page.number] = right
+                targets.append(right)
+            for target, region in zip(targets, regions):
+                pt = 72.0 / dpi
+                origin = (image[0] + region.x0 * pt, image[3])
+                scan = read_scan_page(region.image, origin, dpi,
+                                      _layer_into(region, layer, image, dpi, len(regions) > 1),
+                                      lexicon, lang=lang)
+                rows = _rows_from_scan(scan, target.number)
+                for frame, group in _column_groups(rows, lambda r: (r.x0, r.x1, r.top, r.bottom)):
+                    for row in sorted(group, key=lambda r: -r.top):
+                        row.frame = frame
+                        target.rows.append(row)
+                target.rules = scan.rules
+        if halves:
+            out = _number_spread_pages(out, halves)
     return out, device.invisible_glyphs / max(device.glyphs, 1)
+
+
+def _layer_into(region, layer: list, image: tuple, dpi: int, split: bool) -> list:
+    """The PDF's own OCR layer, cut to one region and turned with it (points, y up)."""
+    s = dpi / 72.0
+    ox, oy = image[0], image[3]
+    w, h = region.image.size
+    out = []
+    for x0, y0, x1, y1, toks in layer:
+        cx, cy = ((x0 + x1) / 2 - ox) * s, (oy - (y0 + y1) / 2) * s  # source px
+        if split and not region.x0 <= cx < region.x0 + w:
+            continue
+        rx, ry = region.from_source(cx, cy)
+        dx, dy = (rx + region.x0 - cx) / s, (ry - cy) / s
+        out.append((x0 + dx, y0 - dy, x1 + dx, y1 - dy, toks))
+    return out
+
+
+def _number_spread_pages(pages: list[Page], halves: dict[int, Page]) -> list[Page]:
+    """Put each spread's right-hand page after its left one and number the pages in
+    reading order, keeping the gaps between PDF pages that were left out (--pages)."""
+    out: list[Page] = []
+    extra = 0
+    for page in pages:
+        right = halves.get(page.pdf_page)
+        for p in [page] + ([right] if right else []):
+            if p.part == "b":
+                extra += 1
+            p.number = p.pdf_page + extra
+            for row in p.rows:
+                row.page = p.number
+            out.append(p)
+    return out
 
 
 # --------------------------------------------------------------------------------------
@@ -888,6 +949,8 @@ def build_blocks(pages: list[Page], body_rows: dict[int, list[Row]], body: float
                 # 'warmly' / 'Purdue University' / 'received by ...': the short line was
                 # an affiliation or caption at the column foot; the sentence goes on.
                 cur = blocks[-2]  # the short block stays after the paragraph it interrupted
+                if page_markers and i == 0:
+                    cur.page_mark[len(cur.rows)] = page.folio or f"pdf {page.pdf_page}{page.part}"
                 cur.rows.append(row)
                 prev = row
                 continue
@@ -896,7 +959,7 @@ def build_blocks(pages: list[Page], body_rows: dict[int, list[Row]], body: float
                 cur = Block(kind=kind, rows=[])
                 blocks.append(cur)
             if page_markers and i == 0:
-                cur.page_mark[len(cur.rows)] = page.folio or f"pdf {page.number}"
+                cur.page_mark[len(cur.rows)] = page.folio or f"pdf {page.pdf_page}{page.part}"
             cur.rows.append(row)
             prev = row
 
@@ -1396,6 +1459,12 @@ def main() -> int:
     parser.add_argument("--dpi", type=int, default=400, help="OCR resolution (default 400)")
     parser.add_argument("--lang", default="eng", help="Tesseract language(s) (default eng)")
     parser.add_argument("--dictionary", help="Word list for the OCR vote (default: system list)")
+    parser.add_argument(
+        "--no-cleanup",
+        action="store_true",
+        help="Read scans exactly as they are: don't split two-page spreads, clear copier "
+        "shadows or straighten tilted pages",
+    )
     args = parser.parse_args()
 
     ocr = not args.no_ocr and _ocr_available()
@@ -1413,7 +1482,8 @@ def main() -> int:
 
     try:
         pages, invisible_share = extract_pages(args.input, _parse_pages(args.pages), ocr=ocr,
-                                               dpi=args.dpi, lang=args.lang, lexicon=lexicon)
+                                               dpi=args.dpi, lang=args.lang, lexicon=lexicon,
+                                               prepare=not args.no_cleanup)
     except Exception as exc:
         name = type(exc).__name__
         if "Encryption" in name or "Password" in name:
