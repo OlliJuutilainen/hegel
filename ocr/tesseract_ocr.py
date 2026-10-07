@@ -1,9 +1,7 @@
-"""Route 2/3 foundation: run Tesseract and return per-word text, boxes and confidence.
+"""Run Tesseract and return per-word text, boxes and confidence (for run_tesseract.py).
 
-Unlike the Claude-vision route, Tesseract exposes a bounding box and a confidence
-score for every word. That gives us (a) a properly positioned invisible layer and
-(b) the signal needed for the future two-pass Greek targeting (route 3): low-conf
-boxes are the "stumped" spots worth a second, bounded look.
+The boxes place each word's invisible text over the printed word; the confidence
+lets callers drop words Tesseract was unsure of (--min-conf).
 """
 
 from __future__ import annotations

@@ -10,6 +10,7 @@ from __future__ import annotations
 import dataclasses
 import io
 import os
+import re
 
 from pypdf import PageObject, PdfReader
 from reportlab.lib.utils import ImageReader
@@ -90,13 +91,19 @@ def _emit_line_in(text_obj, line_words, scale_x, scale_y, page_h, font, force_le
     text_obj.textOut(text + " ")  # Tj without the line-break T* — stay in this BT
 
 
-def _group_by_paragraph(words):
+def _group_by_paragraph(words, drop_running_heads: bool = False):
     """Group Tesseract words into paragraphs, each an ordered list of lines.
 
     Returns a list of paragraphs in reading order; each paragraph is a list of lines,
     each line a list of Words sorted left-to-right. Grouping keys come straight from
     Tesseract's layout analysis (block_num, par_num, line_num).
+
+    Book-page cleanup on the way: footnote reference markers are stripped from the
+    body text, the running head is never merged into the first paragraph (and is
+    dropped altogether with `drop_running_heads`), and footnotes are kept apart from
+    the body and from each other.
     """
+    words = _strip_footnote_markers(words)
     paras: dict = {}
     for w in words:
         pkey = (getattr(w, "block_num", 0), getattr(w, "par_num", 0))
@@ -112,7 +119,109 @@ def _group_by_paragraph(words):
             for lk in sorted(lines.keys())
         ]
         result.append(ordered)
-    return _merge_continuation_paragraphs(result)
+    result = _merge_continuation_paragraphs(result)
+    if drop_running_heads and result and _is_running_head(result[0]):
+        result = result[1:]
+    return _split_footnote_paragraphs(result, _body_height(words))
+
+
+def _median_height(words) -> float:
+    heights = sorted(w.height for w in words)
+    return heights[len(heights) // 2] if heights else 0
+
+
+def _body_height(words) -> float:
+    """Median word height of the body text, taken from the upper 60% of the page's
+    text so that a long run of footnotes at the bottom can't pass for the body."""
+    if not words:
+        return 0
+    top = min(w.top for w in words)
+    bottom = max(w.top + w.height for w in words)
+    cutoff = top + 0.6 * (bottom - top)
+    return _median_height([w for w in words if w.top <= cutoff] or words)
+
+
+# A footnote reference that Tesseract emits as a word of its own, e.g. '1', '*', '²'.
+_MARKER_WORD = re.compile(r"^[0-9*†‡¹²³⁴⁵⁶⁷⁸⁹⁰]{1,3}$")
+# A marker glued onto the preceding word: 'mediation,1', 'consciousness.*', 'being²'.
+# Digits only count after punctuation that follows a real word, so 'B2', '§78',
+# 'p.12' and 'vol.2' are left alone.
+_GLUED_MARKER = re.compile(
+    r"(?<=[A-Za-z]{4})([.,;:!?)\]’”\"']+)(?:\d{1,3})$"
+    r"|(?<=[A-Za-z.,;:!?)\]’”\"'])[*†‡]+$"
+    r"|[¹²³⁴⁵⁶⁷⁸⁹⁰]+$"
+)
+
+
+def _strip_footnote_markers(words):
+    """Remove footnote reference markers from the OCR words.
+
+    Two forms: a stand-alone marker word that sits small and raised above its line's
+    baseline, or alone on a line of its own (dropped), and a digit/asterisk Tesseract glued onto the preceding word
+    (trimmed). Footnote numbers at the start of the footnotes themselves are full
+    size and on the baseline, so they survive. A superscript Tesseract reads as a
+    quote mark ('mediation,’') can't be told apart from a real quote and stays.
+    """
+    lines: dict = {}
+    for w in words:
+        lines.setdefault((w.block_num, w.par_num, w.line_num), []).append(w)
+    page_h = _median_height(words)
+
+    out = []
+    for w in words:
+        line = lines[(w.block_num, w.par_num, w.line_num)]
+        others = [o for o in line if o is not w]
+        if _MARKER_WORD.match(w.text):
+            if others:
+                baseline = sorted(o.top + o.height for o in others)[len(others) // 2]
+                line_h = _median_height(others)
+                raised = w.top + w.height < baseline - 0.25 * line_h
+                if raised and w.height < 0.75 * line_h:
+                    continue
+            elif w.height < 0.6 * page_h:
+                continue  # a marker Tesseract split off into a line of its own
+        trimmed = _GLUED_MARKER.sub(lambda m: m.group(1) or "", w.text)
+        if trimmed != w.text and trimmed:
+            w = dataclasses.replace(w, text=trimmed)
+        out.append(w)
+    return out
+
+
+def _is_running_head(paragraph) -> bool:
+    """True for a one-line paragraph that looks like a running head: the page's book or
+    chapter title in capitals, and/or the page number at either end of the line."""
+    if len(paragraph) != 1 or not paragraph[0]:
+        return False
+    tokens = [w.text for w in paragraph[0]]
+    letters = [ch for ch in "".join(tokens) if ch.isalpha()]
+    mostly_caps = bool(letters) and sum(ch.isupper() for ch in letters) >= 0.8 * len(letters)
+    page_number = any(re.fullmatch(r"\d{1,4}|[ivxlcdm]{1,7}", t) for t in (tokens[0], tokens[-1]))
+    return mostly_caps or page_number
+
+
+def _split_footnote_paragraphs(paragraphs, body_height: float):
+    """Start a new paragraph at each numbered footnote.
+
+    Tesseract often reads a run of footnotes as one paragraph. Inside paragraphs set
+    smaller than the page's body text, a line that opens with a footnote number
+    ('1', '12', '*', '†') begins a new footnote. Body paragraphs are left alone, so a
+    sentence that happens to start with a year or a number is never split.
+    """
+    out = []
+    for para in paragraphs:
+        words = [w for ln in para for w in ln]
+        if not body_height or not words or _median_height(words) >= 0.9 * body_height:
+            out.append(para)
+            continue
+        current: list = []
+        for ln in para:
+            if current and ln and re.fullmatch(r"\d{1,3}\.?|[*†‡]+", ln[0].text):
+                out.append(current)
+                current = []
+            current.append(ln)
+        if current:
+            out.append(current)
+    return out
 
 
 def _merge_continuation_paragraphs(paragraphs):
@@ -141,10 +250,18 @@ def _merge_continuation_paragraphs(paragraphs):
         median_h = sorted(heights)[len(heights) // 2] if heights else 0
         prev_left = min(w.left for w in prev_last_line)
         next_left = min(w.left for w in next_first_line)
+        # A change of type size (body -> footnotes) is a break, however tight the gap.
+        prev_size = _median_height([w for ln in prev for w in ln])
+        next_size = _median_height([w for ln in nxt for w in ln])
+        same_size = min(prev_size, next_size) >= 0.85 * max(prev_size, next_size)
+        # The running head sits just above the first line; never fold it into the body.
+        after_head = len(merged) == 1 and _is_running_head(prev)
         is_continuous = (
             median_h
             and gap <= 1.2 * median_h
             and abs(prev_left - next_left) <= 0.5 * median_h
+            and same_size
+            and not after_head
         )
         if is_continuous:
             prev.extend(nxt)
@@ -273,7 +390,7 @@ def _emit_paragraph(c, lines, scale_x, scale_y, page_h, font):
 
 
 def build_positioned_overlay_page(
-    words,
+    paragraphs,
     img_w: int,
     img_h: int,
     page_w: float,
@@ -281,13 +398,14 @@ def build_positioned_overlay_page(
     *,
     font: str = _FALLBACK_FONT,
 ) -> PageObject:
-    """Place each OCR paragraph as positioned invisible text wrapped in an /ActualText span."""
+    """Place each OCR paragraph (from _group_by_paragraph) as positioned invisible text
+    wrapped in an /ActualText span."""
     scale_x = page_w / img_w
     scale_y = page_h / img_h
 
     packet = io.BytesIO()
     c = canvas.Canvas(packet, pagesize=(page_w, page_h))
-    for para in _group_by_paragraph(words):
+    for para in paragraphs:
         _emit_paragraph(c, para, scale_x, scale_y, page_h, font)
     c.showPage()
     c.save()
@@ -297,7 +415,7 @@ def build_positioned_overlay_page(
 
 def build_image_page_with_text(
     image,
-    words,
+    paragraphs,
     page_w: float,
     page_h: float,
     *,
@@ -305,8 +423,9 @@ def build_image_page_with_text(
     jpeg_quality: int = 85,
 ) -> PageObject:
     """Build a self-contained PDF page from scratch: the rendered scan as background plus our
-    invisible OCR text on top. Any pre-existing (corrupt) text layer in the source PDF is
-    dropped, so text selection picks up only the clean OCR layer.
+    invisible OCR text (paragraphs from _group_by_paragraph) on top. Any pre-existing
+    (corrupt) text layer in the source PDF is dropped, so text selection picks up only the
+    clean OCR layer.
     """
     img_w, img_h = image.size
     scale_x = page_w / img_w
@@ -321,7 +440,7 @@ def build_image_page_with_text(
     packet = io.BytesIO()
     c = canvas.Canvas(packet, pagesize=(page_w, page_h))
     c.drawImage(ImageReader(img_buf), 0, 0, width=page_w, height=page_h)
-    for para in _group_by_paragraph(words):
+    for para in paragraphs:
         _emit_paragraph(c, para, scale_x, scale_y, page_h, font)
 
     c.showPage()
