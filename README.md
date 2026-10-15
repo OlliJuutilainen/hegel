@@ -11,6 +11,7 @@ Choose by what you want to come out, not by what went in:
 | the **same PDF, searchable**: an invisible text layer to select, search and highlight | `run_tesseract.py` | scans and photocopies |
 | **bookmarks** (a clickable table of contents) in a PDF | `add_outline.py` (+ helpers below) | a PDF with a text layer |
 | your **old highlights** moved onto a new OCR'd copy | `migrate_annotations.py` | two PDFs of the same scan |
+| **page images cropped** top and bottom to the text block | `vcrop.py` | a folder of .jpg/.png book scans |
 
 `pdf_to_markdown.py` decides page by page how to read: from the text layer where the
 PDF has real typesetting, by OCR where the page is a picture. So a JSTOR article, a
@@ -107,3 +108,29 @@ python3 run_tesseract.py copy.pdf copy_OCR.pdf --split-spreads    # one book pag
   `add_outline.py outline.md book_OCR.pdf book_outlined.pdf` adds the bookmarks.
 - `migrate_annotations.py old.pdf new_OCR.pdf merged.pdf` lifts highlights and notes
   from an old copy of the same scan onto the OCR'd one (same pages, same sizes).
+
+## Crop page images to the text block
+
+```
+python3 -m venv ~/hegel/venv && source ~/hegel/venv/bin/activate
+pip install "opencv-python<4.10" "numpy<2"     # macOS 11 on Intel: newest prebuilt wheels
+python vcrop.py scans/ cropped/ --debug debug/
+```
+
+- Each page is cut just above its first and below its last line of content, plus
+  `--pad` (default 0.02 of the page height). The width is never touched; nothing is
+  scaled and no border is added. Running heads and page numbers are content and stay.
+- Pages are written to OUT_DIR under the same names and format (JPEG quality 95); the
+  originals are never changed. A page is copied as it is when less than `--min-gain`
+  (default 0.03 of its height) would go (already cropped), when it is listed in
+  `--skip skip.txt` (one file name per line), or when no text block taller than 40 %
+  of the page is found.
+- `OUT_DIR/vcrop_log.csv` lists `file,action,height,top_cut,bottom_cut` per page, with
+  action `cropped`, `unchanged`, `skipped` or `failed`.
+- `--debug DIR` writes a small copy of each page: regions taken for dust or scanner
+  edge in red, the text block in green, the crop lines in blue. Look through it
+  before using the crops.
+- Dust and specks under 0.05 % of the page are ignored, but a small region as tall as
+  a line of text (a lone page number) is kept. A pencil mark or a large blot in the
+  margin counts as content, so that page is cropped less.
+- On a newer Mac a plain `pip install opencv-python numpy` works.
