@@ -20,7 +20,8 @@ Output:
   - two-column pages       -> read column by column, full-width parts in place
   - footnote markers       -> [^1] with the note text as [^1]: ... at the end
   - running heads, folios  -> dropped (page numbers optionally kept, --page-markers)
-  - JSTOR cover page       -> YAML front matter (title, author, source, URL)
+  - JSTOR cover page       -> front matter (title, author, journal, volume, issue, pages, URL)
+  - DOI on the first pages -> front matter from its Crossref record (--no-lookup: the DOI only)
   - indented block quotes  -> > quote; numbered premises -> 1. lists
   - line-end hyphenation   -> joined ('specu-' + 'lative' -> 'speculative'),
                               keeping real compounds ('self-consciousness')
@@ -622,27 +623,212 @@ def jstor_front_matter(page: Page) -> dict | None:
         return m.group(1).strip() if m else ""
 
     meta = {
+        "type": "academic",
         "title": flat.split("Author(s):")[0].strip(),
-        "author": between("Author(s):", r"Source:"),
-        "source": between("Source:", r"Published by:|Stable URL:"),
-        "publisher": between("Published by:", r"Stable URL:"),
+        "author": _authors_line(between("Author(s):", r"Source:")),
     }
+    source = re.sub(r"(\d)-\s+(\d)", r"\1-\2", between("Source:", r"Published by:|Stable URL:"))
+    meta.update(_jstor_source(source))
     url = re.search(r"Stable URL:\s*(\S+)", flat)
     if url:
         meta["url"] = url.group(1)
-    meta["source"] = re.sub(r"(\d)-\s+(\d)", r"\1-\2", meta["source"])
     return {k: v for k, v in meta.items() if v}
+
+
+def _authors_line(s: str) -> str:
+    """'A. Smith, B. Jones and C. Brown' -> 'A. Smith & B. Jones & C. Brown' (Latomo's list)."""
+    return " & ".join(p.strip() for p in re.split(r",\s*(?:and\s+)?|\s+and\s+", s) if p.strip())
+
+
+def _jstor_source(s: str) -> dict:
+    """'Mind, New Series, Vol. 72, No. 288 (Oct., 1963), pp. 481-501' -> journal, volume,
+    issue, date, pages. A source line of another shape is kept whole as 'citation'."""
+    m = re.match(r"^(.*?),\s*Vol\.\s*([\w.]+)(?:,\s*No\.\s*([\w./-]+))?"
+                 r"(?:,?\s*\(([^)]*)\))?(?:,\s*pp?\.\s*([\w-]+))?", s)
+    if not m:
+        return {"citation": s} if s else {}
+    year = re.search(r"\b(1[5-9]\d\d|20\d\d)\b", m.group(4) or "")
+    return {
+        "journal": m.group(1).strip(),
+        "volume": m.group(2),
+        "issue": m.group(3) or "",
+        "date": year.group(1) if year else "",
+        "pages": (m.group(5) or "").replace("-", "–"),
+    }
+
+
+# Order of the front matter. The keys are the ones Latomo (Luin's typesetter) reads for a
+# Teologian tyyli reference; iA Writer shows any of them as [%key].
+_FRONT_KEYS = ("type", "title", "subtitle", "author", "editor", "date", "journal", "booktitle",
+               "volume", "issue", "pages", "edition", "series", "place", "publisher", "doi",
+               "isbn", "url", "citation")
 
 
 def _yaml_front_matter(meta: dict) -> str:
     """iA Writer metadata: '---', plain 'key: value' lines, '---' (no quoting — iA
     would show quotes as part of the value in [%title])."""
     lines = ["---"]
-    for key in ("title", "author", "source", "publisher", "url"):
-        if key in meta:
-            lines.append(f"{key}: {' '.join(meta[key].split())}")
+    for key in _FRONT_KEYS:
+        if meta.get(key):
+            lines.append(f"{key}: {' '.join(str(meta[key]).split())}")
     lines.append("---")
     return "\n".join(lines)
+
+
+# --------------------------------------------------------------------------------------
+# Bibliographic data: DOI -> Crossref
+# --------------------------------------------------------------------------------------
+
+_DOI = re.compile(r"\b(10\.\d{4,9}/[^\s\"<>]+)", re.I)
+_SCHOLARLY = {"journal-article", "book", "monograph", "edited-book", "reference-book",
+              "book-chapter", "book-section", "book-part", "proceedings-article",
+              "dissertation", "report", "posted-content"}
+_BOOK = {"book", "monograph", "edited-book", "reference-book"}
+
+
+def find_doi(text: str) -> str | None:
+    """The work's own DOI in its first pages: a labelled one ('DOI', 'doi.org/') before
+    any other, so that a DOI cited in the text loses to the one on the copyright page."""
+    flat = re.sub(r"(doi\.org/|DOI:?)\s+", r"\1", text, flags=re.I)
+    labelled = re.search(r"(?:doi\.org/|\bdoi:?\s*)(10\.\d{4,9}/[^\s\"<>]+)", flat, re.I)
+    m = labelled or _DOI.search(flat)
+    return m.group(1).rstrip(".,;)]") if m else None
+
+
+def _plain(s: str) -> str:
+    import html
+
+    return " ".join(html.unescape(re.sub(r"<[^>]+>", "", s or "")).split())
+
+
+def _name_case(s: str) -> str:
+    return s.title() if s.isupper() else s
+
+
+def _person(p: dict) -> str:
+    if p.get("name"):
+        return p["name"]
+    return " ".join(_name_case(x) for x in (p.get("given", ""), p.get("family", "")) if x)
+
+
+def _as_in_text(title: str, text: str) -> str:
+    """Crossref's ALL-CAPS title (old journals) in the letter case the PDF prints it."""
+    if not title.isupper():
+        return title
+    words = re.findall(r"\w+", title)
+    m = re.search(r"\W+".join(map(re.escape, words)), text, re.I) if words else None
+    return m.group(0) if m and not m.group(0).isupper() else title
+
+
+def crossref(doi: str, timeout: float = 10.0) -> dict | None:
+    """The work's Crossref record, or None (no network, unknown DOI)."""
+    import json
+    import urllib.parse
+    import urllib.request
+
+    url = "https://api.crossref.org/works/" + urllib.parse.quote(doi, safe="/")
+    req = urllib.request.Request(url, headers={
+        "User-Agent": "hegel-pdf_to_markdown (https://github.com/OlliJuutilainen/hegel)"})
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as r:
+            return json.load(r).get("message")
+    except Exception as exc:  # network down, 404, bad JSON: the conversion goes on without
+        hint = (" On macOS, run 'Install Certificates.command' in the Python folder."
+                if "CERTIFICATE_VERIFY_FAILED" in str(exc) else "")
+        print(f"NOTE: no Crossref record for DOI {doi} ({exc}).{hint}", file=sys.stderr)
+        return None
+
+
+def crossref_front_matter(rec: dict, text: str) -> dict:
+    """Front matter fields from a Crossref record; text is the PDF's first pages, for the
+    publisher's imprint and the title's letter case."""
+    kind = rec.get("type", "")
+    title = _as_in_text(_plain((rec.get("title") or [""])[0]), text)
+    title = re.sub(r"^[IVXLC]+\.\s*[—–-]\s*", "", title)  # Mind's 'II.—THE MEANING OF …'
+    containers = [_plain(c) for c in rec.get("container-title") or []]
+    year = ((rec.get("issued") or {}).get("date-parts") or [[None]])[0]
+    meta = {
+        "type": "academic" if kind in _SCHOLARLY else "",
+        "title": title,
+        "subtitle": _plain((rec.get("subtitle") or [""])[0]),
+        "author": " & ".join(_person(p) for p in rec.get("author") or []),
+        "editor": " & ".join(_person(p) for p in rec.get("editor") or []),
+        "date": "-".join(f"{x:02d}" if i else str(x) for i, x in enumerate(year) if x),
+        "pages": (rec.get("page") or "").replace("-", "–"),
+        "doi": rec.get("DOI", ""),
+    }
+    if kind == "journal-article":
+        meta.update(journal=containers[0] if containers else "", volume=rec.get("volume", ""),
+                    issue=rec.get("issue", ""))
+    else:
+        # A book's container is its series; a chapter's is [series,] book.
+        if kind in _BOOK:
+            meta["series"] = containers[0] if containers else ""
+        elif containers:
+            meta["booktitle"] = containers[-1]
+            meta["series"] = containers[0] if len(containers) > 1 else ""
+        # Springer names its imprint only in the book: 'This Palgrave Macmillan imprint is
+        # published by the registered company Springer Nature Switzerland AG'.
+        imprint = re.search(r"This (.{2,60}?) imprint is published by", re.sub(r"\s+", " ", text))
+        meta.update(publisher=imprint.group(1) if imprint else rec.get("publisher", ""),
+                    place=rec.get("publisher-location", ""),
+                    edition=str(rec.get("edition-number") or ""),
+                    isbn=", ".join(rec.get("ISBN") or []))
+    return {k: v for k, v in meta.items() if v}
+
+
+def pdf_info_front_matter(path: str) -> dict:
+    """Title and author from the PDF's document info, when they look like real ones."""
+    try:
+        from pdfminer.pdfdocument import PDFDocument
+        from pdfminer.pdfparser import PDFParser
+        from pdfminer.psparser import PSLiteral
+        from pdfminer.pdftypes import resolve1
+
+        with open(path, "rb") as fp:
+            info = (PDFDocument(PDFParser(fp)).info or [{}])[0]
+
+        def get(key: str) -> str:
+            v = resolve1(info.get(key))
+            if isinstance(v, bytes):
+                v = v.decode("utf-16") if v[:2] in (b"\xfe\xff", b"\xff\xfe") else v.decode("latin-1")
+            return "" if v is None or isinstance(v, PSLiteral) else " ".join(str(v).split())
+    except Exception:
+        return {}
+    title, author = get("Title"), get("Author")
+    if re.search(r"\.(docx?|pdf|indd|tex|dvi|rtf|odt)$|^(microsoft word|untitled)\b|^\d+$", title, re.I):
+        title = ""
+    return {k: v for k, v in {"title": title, "author": author if title else ""}.items() if v}
+
+
+def document_metadata(path: str, pages: list[Page], lookup: bool = True) -> tuple[dict, dict]:
+    """Front matter for the whole document as (weak, strong): the PDF's own info, which a
+    JSTOR cover page overrides, and the Crossref record of the DOI printed in the first
+    pages (lookup=False: the DOI alone), which overrides both."""
+    first = ""
+    try:
+        from pdfminer.high_level import extract_text
+
+        first = extract_text(path, maxpages=10)
+    except Exception:
+        pass
+    first += "\n" + "\n".join(r.text for p in pages[:10] for r in p.rows)
+    info = pdf_info_front_matter(path)
+    doi = find_doi(first)
+    if not doi:
+        return info, {}
+    rec = crossref(doi) if lookup else None
+    if rec:
+        found = crossref_front_matter(rec, first)
+        # A DOI cited in the text instead of the work's own: its title isn't on the first pages.
+        words = [w for w in re.findall(r"\w{4,}", found.get("title", "").lower())]
+        flat = first.lower()
+        if words and sum(w in flat for w in words) >= 0.6 * len(words):
+            return info, {**found, "doi": doi}  # as printed: Crossref lowercases it
+        print(f"NOTE: DOI {doi} found, but its Crossref title isn't on the first pages; "
+              "left out.", file=sys.stderr)
+        return info, {}
+    return info, {"doi": doi}
 
 
 # --------------------------------------------------------------------------------------
@@ -1301,16 +1487,21 @@ def _block_text_fixups(text: str, block: Block, meta: dict | None) -> str:
     return text
 
 
-def to_markdown(pages: list[Page], page_markers: bool = False) -> str:
-    meta = None
+def to_markdown(pages: list[Page], page_markers: bool = False,
+                metadata: tuple[dict, dict] | None = None) -> str:
+    """metadata: (weak, strong) front matter fields from document_metadata(); a JSTOR
+    cover page's fields go between them."""
+    jstor = None
     kept: list[Page] = []
     for page in pages:
         m = jstor_front_matter(page) if not page.scanned else None
-        if m and meta is None:
-            meta = m
+        if m and jstor is None:
+            jstor = m
             continue
         kept.append(page)
     pages = kept
+    weak, strong = metadata or ({}, {})
+    meta = {**weak, **(jstor or {}), **strong} or None
 
     sizes = Counter()
     for page in pages:
@@ -1357,7 +1548,7 @@ def to_markdown(pages: list[Page], page_markers: bool = False) -> str:
     seen_heading = False
     for b in blocks:
         seen_heading = seen_heading or b.kind == "h"
-        if meta and not seen_heading and re.match(r"^Vol(ume|\.)\s*\d", _band_text(b.rows)):
+        if jstor and not seen_heading and re.match(r"^Vol(ume|\.)\s*\d", _band_text(b.rows)):
             continue  # the journal's issue line; the front matter has it
         # Notes on the block's own pages win; a neighbouring page is the fallback for a
         # note that the typesetter pushed to the next page (or a marker that ran over).
@@ -1378,7 +1569,7 @@ def to_markdown(pages: list[Page], page_markers: bool = False) -> str:
                 text = _roman_heading(b.rows[0])
             else:
                 text = render_inline(glyphs, ids)
-            text = _block_text_fixups(text, b, meta)
+            text = _block_text_fixups(text, b, jstor)
             # iA Writer reads a heading's closing '[...]' as a cross-reference label.
             text = re.sub(r"\[([^\]]*)\]$", r"\\[\1]", text)
             parts.append("#" * b.level + " " + text)
@@ -1388,7 +1579,7 @@ def to_markdown(pages: list[Page], page_markers: bool = False) -> str:
             text = _tidy(render_inline(glyphs, ids), ocr)
             parts.append(re.sub(r"^(\d{1,2})\s?\.\s*", r"\1. ", text))
         else:
-            text = _block_text_fixups(_tidy(render_inline(glyphs, ids), ocr), b, meta)
+            text = _block_text_fixups(_tidy(render_inline(glyphs, ids), ocr), b, jstor)
             parts.append(_escape_block_start(text))
 
     for nid, rows in notes:
@@ -1456,6 +1647,11 @@ def main() -> int:
         action="store_true",
         help="Don't OCR scanned pages; use the PDF's own (invisible) text layer as is",
     )
+    parser.add_argument(
+        "--no-lookup",
+        action="store_true",
+        help="Don't ask Crossref for the bibliographic data of the DOI found in the PDF",
+    )
     parser.add_argument("--dpi", type=int, default=400, help="OCR resolution (default 400)")
     parser.add_argument("--lang", default="eng", help="Tesseract language(s) (default eng)")
     parser.add_argument("--dictionary", help="Word list for the OCR vote (default: system list)")
@@ -1494,7 +1690,8 @@ def main() -> int:
     _warn_about_text_layer(pages, invisible_share, ocr)
 
     output = args.output or str(Path(args.input).with_suffix(".md"))
-    markdown = to_markdown(pages, page_markers=args.page_markers)
+    metadata = document_metadata(args.input, pages, lookup=not args.no_lookup)
+    markdown = to_markdown(pages, page_markers=args.page_markers, metadata=metadata)
     Path(output).write_text(markdown, encoding="utf-8")
     print(f"Wrote {output} ({len(pages)} page(s))")
     return 0

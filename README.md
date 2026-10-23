@@ -66,7 +66,18 @@ against any OCR layer the PDF already carries. Both kinds can sit in one file.
   small raised figures are found in the image and matched to the notes in order.
 - Subscripts on scans → `s₁`; numbered premises → `1.` lists; block quotes → `>`.
 - Running heads, page numbers and JSTOR "This content downloaded…" stamps are
-  dropped; a JSTOR cover page becomes YAML front matter (title, author, source, URL).
+  dropped; a JSTOR cover page becomes front matter (title, author, journal, volume,
+  issue, date, pages, URL).
+- Bibliographic data: a DOI printed on the first pages (the copyright page of a book,
+  the first page of an article) is looked up in Crossref, and the record goes into the
+  front matter: title, subtitle, authors, editors, date, journal / volume / issue or
+  book title, pages, series, place, publisher (a Springer book's imprint, e.g. Palgrave
+  Macmillan, from its copyright page), DOI and ISBN. The DOI is the only thing sent;
+  `--no-lookup` keeps just the DOI. A DOI whose title isn't on the first pages (one
+  cited in the text) is left out. Without a DOI, the PDF's own title and author are
+  used if they look real.
+- The front matter keys are the ones [Latomo](https://ollijuutilainen.github.io/luin/latomo.html)
+  reads for a reference (`type: academic` selects a scholarly text there).
   `--page-markers` puts the printed page number where each page begins, as `{p. 25}`
   (or `{p. pdf 7b}`, the PDF page and side, when no number could be read).
 - Line-end hyphenation is undone, keeping real compounds (`self-consciousness`,
