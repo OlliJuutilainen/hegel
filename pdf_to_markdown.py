@@ -504,6 +504,13 @@ def _rows_from_scan(scan, page_no: int) -> list[Row]:
         size = line.size
 
         def raised(label: str, x: float) -> None:
+            # Pieces of one figure read as two words ('**' '7' for ¹¹) make one label;
+            # a piece that couldn't be read leaves the whole label unread.
+            prev = ""
+            while glyphs and glyphs[-1].sup and not glyphs[-1].is_space:
+                prev = glyphs.pop().text + prev
+            if prev:
+                label = prev + label if (prev + label).isdigit() else "?"
             for ch in label:
                 glyphs.append(Glyph(ch, size=0.6 * size, x0=x, x1=x,
                                     y0=line.baseline + 0.4 * size, sup=True))
@@ -933,7 +940,7 @@ def document_metadata(path: str, pages: list[Page], lookup: bool = True) -> tupl
 # Page furniture: running heads, folios, footnotes
 # --------------------------------------------------------------------------------------
 
-_FOLIO = re.compile(r"^(?:\d{1,4}|[ivxlcdm]{1,7}|[IVXLCDM]{1,7}|\d{2,3}[Il])$")
+_FOLIO = re.compile(r"^(?:\d{1,4}|[ivxlcdm]{1,7}|[IVXLCDM]{1,7}|(?=.*\d)[\dIl]{2,4})$")
 
 
 def _furniture_key(row: Row) -> str:
@@ -963,7 +970,9 @@ def _edge_band(rows: list[Row], top: bool) -> int:
 
 
 def _band_text(rows: list[Row]) -> str:
-    return " ".join(r.plain_text for r in sorted(rows, key=lambda r: r.x0))
+    text = " ".join(r.plain_text for r in sorted(rows, key=lambda r: r.x0))
+    # OCR may part the figures of a page number ('1 7' for 17).
+    return text.replace(" ", "") if re.fullmatch(r"\d( \d){1,3}", text) else text
 
 
 _DOI_LINE = re.compile(r"^(?:DOI:?\s*|https?://(?:dx\.)?doi\.org/)10\.\d{4,9}/\S+$", re.I)
@@ -1064,6 +1073,69 @@ def _folio_value(folio: str) -> tuple[str, int] | None:
     return None
 
 
+def _arabic(folio: str | None, arabic_nearby: bool) -> int | None:
+    """A printed page number as a number. Old-style figures read badly: a one is read as
+    'I' or 'l' ('II' for 11, 'II1' for 111) — among arabic-numbered pages, that is what
+    a run of I's and l's is."""
+    if not folio:
+        return None
+    if folio.isdigit():
+        return int(folio)
+    if arabic_nearby and re.fullmatch(r"[\dIl]+", folio) and (re.search(r"\d", folio) or len(folio) <= 3):
+        return int(re.sub(r"[Il]", "1", folio))
+    return None
+
+
+def _repair_folios(pages: list[Page]) -> None:
+    """Fix printed page numbers that OCR misread, by their neighbours.
+
+    The two pages of a scanned spread face each other, so the right one is numbered one
+    more than the left. Old-style figures lose their leading one ('3' for 13, '09' for
+    109) or read it as 'I': a number that is the tail of the one its neighbours imply is
+    that number. A number that agrees with no neighbour is left as read (a scan can skip
+    pages or put them out of order)."""
+    order = [p for p in pages if p.rows]
+    raw = {id(p): p.folio for p in order}
+    kinds = {id(p): (_folio_value(p.folio) or ("", 0))[0] for p in order if p.folio}
+
+    def arabic_near(i: int) -> bool:
+        return any(kinds.get(id(order[j])) == "arabic"
+                   for j in range(max(0, i - 3), min(len(order), i + 4)) if j != i)
+
+    val = {id(p): _arabic(p.folio, arabic_near(i)) for i, p in enumerate(order)}
+
+    def tail_fits(read: str | None, want: int) -> bool:
+        digits = re.sub(r"[Il]", "1", read or "")
+        return bool(digits) and digits.isdigit() and str(want).endswith(digits.lstrip("0") or "0") \
+            and len(digits) <= len(str(want))
+
+    for _ in range(2):
+        for i, p in enumerate(order):
+            if not arabic_near(i) and val[id(p)] is None:
+                continue
+            # The facing page of a spread.
+            mate = next((q for q in order if q is not p and q.pdf_page == p.pdf_page and q.part), None)
+            if p.part and mate is not None:
+                other = val[id(mate)]
+                if other is not None:
+                    want = other + 1 if p.part == "b" else other - 1
+                    if val[id(p)] != want and (val[id(p)] is None or tail_fits(raw[id(p)], want)):
+                        val[id(p)] = want
+                        continue
+            # A number that is the tail of one between its neighbours.
+            prev = next((val[id(q)] for q in reversed(order[:i]) if val[id(q)] is not None), None)
+            nxt = next((val[id(q)] for q in order[i + 1:] if val[id(q)] is not None), None)
+            v = val[id(p)]
+            if v is not None and prev is not None and nxt is not None and not prev < v < nxt:
+                fits = [w for w in range(prev + 1, nxt) if tail_fits(raw[id(p)], w)]
+                if len(fits) == 1:
+                    val[id(p)] = fits[0]
+    for p in order:
+        v = val[id(p)]
+        if v is not None and kinds.get(id(p)) != "roman":
+            p.folio = str(v)
+
+
 def _infer_folios(pages: list[Page]) -> None:
     """A chapter's opening page usually has no printed number; it is one less than the
     next page's (or one more than the previous page's). Counted from numbered pages at
@@ -1105,8 +1177,15 @@ def _footnote_label(row: Row) -> tuple[str | None, int]:
             j += 1
         if _MARKER_LABEL.match(label):
             return label, vis[j][0] if j < len(vis) else len(row.glyphs)
-    # Full-size label: '1 See ...', '1. See ...', '* See ...'
-    m = re.match(r"^(\d{1,3}|[*∗†‡]{1,3})(\.?)\s", row.text + " ")
+    # Full-size label: '1 See ...', '1. See ...', '* See ...'; on a scan the figure may
+    # carry a speck read as a sign ('58“ "Unité ...').
+    tail = r"(\.?|[“”°*®’'])" if row.fuzzy else r"(\.?)"
+    m = re.match(r"^(\d{1,3}|[*∗†‡]{1,3})" + tail + r"\s", row.text + " ")
+    if not m and row.fuzzy:
+        m = re.match(r"^(\d{1,3})([°*®])(?=\S)", row.text)  # glued: '8°T am indebted'
+    if m and row.fuzzy and m.group(2) and m.group(2) not in ".":
+        n = len(m.group(1)) + len(m.group(2))
+        return "?", vis[n][0] if n < len(vis) else len(row.glyphs)  # a figure misread
     if m:
         n = len(m.group(1)) + len(m.group(2))
         return m.group(1), vis[n][0] if n < len(vis) else len(row.glyphs)
@@ -1136,6 +1215,56 @@ def _labels_note(row: Row, label: str, refs: set[str]) -> bool:
     return first.sup or row.fuzzy or not label.isdigit() or label in refs
 
 
+def _side_by_side_notes(row: Row) -> list[Row]:
+    """Short notes set side by side on one line ('¹² Ibid., p. 400.   ¹³ Ibid., p. 399.')
+    as one row per note: a raised figure inside a note line, followed by a space and
+    more text, opens the next note (OCR may have glued it to the word before). Only
+    on scans: in typeset notes a raised figure can be a real superscript ('x² is')."""
+    if not row.fuzzy:
+        return [row]
+    cuts = []
+    g = row.glyphs
+    for i in range(1, len(g)):
+        if g[i].sup and not g[i].is_space and not g[i - 1].sup \
+                and any(not x.is_space and not x.sup for x in g[:i]):
+            j = i
+            label = ""
+            while j < len(g) and g[j].sup and not g[j].is_space:
+                label += g[j].text
+                j += 1
+            if _MARKER_LABEL.match(label) and j < len(g) and g[j].is_space \
+                    and any(not x.is_space for x in g[j:]):
+                cuts.append(i)
+    if row.fuzzy:
+        # The next note's figure read full size, with a speck: '... p. vi.  6° The Meaning'.
+        for m in re.finditer(r"(?<=\S )(\d{1,2}[°®*])(?= [A-Z*“\[])", "".join(x.text for x in g)):
+            if m.start() not in cuts:
+                cuts.append(m.start())
+        # Both figures read full size: '65 Ibid., p. 112.   66 Ibid., p. 164.' The next
+        # note's number follows this one's; OCR often misreads the tens ('85' for 65),
+        # so the last figure decides.
+        joined = "".join(x.text for x in g)
+        lead = re.match(r"^\s*(\d{1,3})\b", joined)
+        if lead:
+            nxt = (int(lead.group(1)) + 1) % 10
+            for m in re.finditer(r"(?<=[.)\]] )(\d{1,3})(?= [A-Z*“\[(])", joined):
+                if int(m.group(1)) % 10 == nxt and m.start() not in cuts:
+                    cuts.append(m.start())
+                    nxt = (nxt + 1) % 10
+        cuts.sort()
+    if not cuts:
+        return [row]
+    out = []
+    for a, b in zip([0] + cuts, cuts + [len(g)]):
+        part = g[a:b]
+        while part and part[-1].is_space:
+            part = part[:-1]
+        x0 = next((x.x0 for x in part if not x.is_space), row.x0)
+        out.append(Row(part, x0, part[-1].x1 if part else row.x1, row.top, row.bottom, row.page,
+                       row.size, row.baseline, row.frame, row.fuzzy))
+    return out
+
+
 def split_footnotes(page: Page, body: float) -> tuple[list[Row], list[Row]]:
     """Split a page's rows into (body rows, footnote rows).
 
@@ -1152,8 +1281,29 @@ def split_footnotes(page: Page, body: float) -> tuple[list[Row], list[Row]]:
         label = _footnote_label(row)[0]
         return label is not None and _labels_note(row, label, refs)
 
+    def scanned_label(row: Row) -> bool:
+        # A note's raised figure that OCR read as a sign or two ('*° Ibid.').
+        return row.fuzzy and re.match(r"^[^\w\s]{1,3}\d?\s", row.text + " ") is not None
+
+    # On a scan the type size of a line is a rough estimate, but the notes' tighter
+    # line spacing is plain: a scanned row set as close to its neighbour in the run as
+    # note lines are counts as small type.
+    pitches = [a.baseline - b.baseline for a, b in zip(rows, rows[1:])
+               if _size_class(a, body) == "b" and _size_class(b, body) == "b"]
+    body_pitch = statistics.median(pitches) if len(pitches) >= 3 else None
+
+    def small(i: int) -> bool:
+        if _size_class(rows[i], body) == "s":
+            return True
+        if not (rows[i].fuzzy and body_pitch):
+            return False
+        near = [rows[i - 1].baseline - rows[i].baseline if i > 0 else None,
+                rows[i].baseline - rows[i + 1].baseline if i + 1 < len(rows) else None]
+        return any(d is not None and 0 < d <= 0.82 * body_pitch for d in near) \
+            and rows[i].size <= 1.3 * body
+
     small_from = len(rows)
-    while small_from > 0 and _size_class(rows[small_from - 1], body) == "s":
+    while small_from > 0 and small(small_from - 1):
         small_from -= 1
     # The zone may start below other small type (a verse quote just above the notes).
     for start in range(small_from, len(rows)):
@@ -1162,7 +1312,7 @@ def split_footnotes(page: Page, body: float) -> tuple[list[Row], list[Row]]:
         has_rule = any(first.top - 2 <= y <= above + 2 for _, _, y in page.rules)
         if has_rule and start > 0:
             return rows[:start], rows[start:]
-        if opens_note(first):
+        if opens_note(first) or (start == small_from and scanned_label(first)):
             margin = min(r.x0 for r in rows[start:])
             while (
                 start > small_from
@@ -1683,10 +1833,16 @@ def _assign_note_refs(blocks: list[Block], notes_by_page: dict[int, list[tuple[s
                 break
         else:
             unresolved.append((page, g, label))
+    # A neighbouring page lends a note only if it has more notes than references of its
+    # own (a note the typesetter pushed over): a stray mark read as a reference must not
+    # take the next page's first note and shift every note after it.
+    ref_count = Counter(page for page, _, label in refs if re.fullmatch(r"\d{1,3}|\?|[*∗†‡]+", label))
     for page, g, label in unresolved:
         if not re.fullmatch(r"\d{1,3}|\?|[*∗†‡]+", label):
             continue  # a real superscript ('2nd', 'x²'), not a reference
         for pg in (page, page + 1, page - 1):
+            if pg != page and len(notes_by_page.get(pg, [])) <= ref_count[pg]:
+                continue
             free = [nid for _, nid in notes_by_page.get(pg, []) if nid not in claimed]
             if free:
                 g.note = free[0]
@@ -1815,6 +1971,7 @@ def to_markdown(pages: list[Page], page_markers: bool = False,
     body = sizes.most_common(1)[0][0]
 
     strip_furniture(pages, body)
+    _repair_folios(pages)
     _infer_folios(pages)
     _harmonize_variables(pages)
     vocab = _vocabulary(pages)
@@ -1830,10 +1987,20 @@ def to_markdown(pages: list[Page], page_markers: bool = False,
         body_rows[page.number] = main
         ids: dict[str, int] = {}
         refs = _sup_labels(page.rows)
-        for row in foot:
+        parts = [part for r in foot for part in _side_by_side_notes(r)]
+        margin = min((r.x0 for r in parts), default=0.0)
+        for row in parts:
             label, start = _footnote_label(row)
             if label is not None and not _labels_note(row, label, refs):
                 label = None  # '1. Traditional theism is …', a list inside the note
+            if label is None and row.fuzzy and row.x0 - margin > 0.5 * row.size:
+                # An indented line opening with a sign or two: a note whose raised
+                # figure OCR misread ('*° Ibid.'); the figure is matched by order.
+                m = re.match(r"^\s*[^\w\s]{1,3}\d?\s", row.text + " ")
+                if m:
+                    vis = [i for i, g in enumerate(row.glyphs) if not g.is_space]
+                    n = len(m.group(0).strip())
+                    label, start = "?", vis[n] if n < len(vis) else len(row.glyphs)
             if label is None:
                 if notes:
                     notes[-1][1].append(row)  # continued from the previous page or line

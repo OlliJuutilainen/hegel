@@ -220,8 +220,10 @@ def _clusters(ink: np.ndarray) -> list[tuple[int, int, int, int]]:
 def _classify(top: float, bottom: float) -> str:
     """Kind of a glyph cluster from its extent above the baseline (units: x_size)."""
     height = top - bottom
-    if 0.16 <= bottom <= 0.56 and top >= 0.6 and height >= 0.33:
-        return "sup"  # a raised figure: as tall as a small digit, sitting well above the line
+    if 0.16 <= bottom <= 0.56 and top >= 0.6 and 0.33 <= height <= 0.58:
+        # A raised figure: as tall as a small digit, sitting well above the line. A
+        # full-height letter ('l' on a line that curves towards the spine) is taller.
+        return "sup"
     if bottom >= 0.3 and top >= 0.55:
         return "quote"  # shorter than a figure: a quote mark or apostrophe
     if top <= 0.25 and bottom <= -0.24 and height >= 0.32:
@@ -236,6 +238,13 @@ def _classify(top: float, bottom: float) -> str:
 _SUBSCRIPT = str.maketrans("0123456789", "₀₁₂₃₄₅₆₇₈₉")
 
 
+def _figure_like(ch: str, beside_digit: bool = False) -> bool:
+    """Whether Tesseract's reading of a raised mark can be a small figure: a digit, a
+    sign, or a letter a one is often misread as ('l', 'I'). 'o', 's' and 'z' pass only
+    next to a figure already read ('3o' for 30): alone they are letters of a word."""
+    return not ch.isalpha() or ch in "lIi" or (beside_digit and ch in "oOSsz")
+
+
 def _analyse_word(ink: np.ndarray, line: _HLine, word: dict) -> dict:
     """Split a Tesseract word into its body text and any sup/sub decorations."""
     x0, y0, x1, y1 = word["bbox"]
@@ -248,6 +257,14 @@ def _analyse_word(ink: np.ndarray, line: _HLine, word: dict) -> dict:
         return res
     base = line.baseline_at((x0 + x1) / 2) - y0
     clusters = _clusters(crop)
+    # The line's baseline model can be off by a good part of a letter (a line curving
+    # towards the spine, pencil marks taken into the line): then every letter of a word
+    # looks raised. Most letters of a longer word stand on its own baseline.
+    if len(clusters) >= 4:
+        raised = sum((base - b) / xs >= 0.16 for _, _, _, b in clusters)
+        own = float(np.median([b for _, _, _, b in clusters]))
+        if raised >= 0.6 * len(clusters) and abs(own - base) > 0.12 * xs:
+            base = own
     kinds = [(_classify((base - t) / xs, (base - b) / xs), c0, c1) for c0, c1, t, b in clusters]
     # Heights of lowercase bodies and of capitals, for the line's type size — measured
     # from this word's own ink baseline, which is steadier than the line model's.
@@ -262,8 +279,9 @@ def _analyse_word(ink: np.ndarray, line: _HLine, word: dict) -> dict:
         return res
     chars = list(text)
 
-    # Leading raised figure: a footnote label ('¹ Some philosophers ...').
-    if len(kinds) >= 1 and kinds[0][0] == "sup" and chars:
+    # Leading raised figure: a footnote label ('¹ Some philosophers ...'). A letter that
+    # merely sits high (a curved line near the spine) is not one.
+    if len(kinds) >= 1 and kinds[0][0] == "sup" and chars and _figure_like(chars[0]):
         n = 0
         while n < len(kinds) and kinds[n][0] == "sup":
             n += 1
@@ -280,7 +298,8 @@ def _analyse_word(ink: np.ndarray, line: _HLine, word: dict) -> dict:
     while i_c >= 0 and i_ch >= 0 and i_c > 0:
         kind = kinds[i_c][0]
         ch = chars[i_ch]
-        if kind == "sup" and all(not t.isalnum() for t in tail):
+        beside = i_ch > 0 and chars[i_ch - 1].isdigit() or bool(sup_digits)
+        if kind == "sup" and all(not t.isalnum() for t in tail) and _figure_like(ch, beside):
             seen_sup = True
             if ch in ".,;:":
                 i_c -= 1  # the figure has no letter of its own: Tesseract dropped it
@@ -528,6 +547,8 @@ def read_scan_page(
                 lexicon.add(tok)
 
     for hl, row, ll in zip(hlines, analysed, matched):
+        if _handwriting(hl, lexicon):
+            continue
         words = _vote_line(row, ll[4] if ll else None, lexicon)
         out_words: list[ScanWord] = []
         for text, info, (bx0, bx1) in words:
@@ -580,6 +601,34 @@ def read_scan_page(
     return page
 
 
+def _handwriting(hl: _HLine, lex: Lexicon) -> bool:
+    """A line of pencil notes in the margin or above the text block: Tesseract reads
+    handwriting with very low confidence and mostly as non-words ('el hfe wehkine rch').
+    Print in a foreign language keeps its confidence, so the word list alone doesn't
+    decide. Kept: a lone figure (a footnote reference on a line of its own), a page
+    number or section numeral, and the short last line of a paragraph ('started.')."""
+    words = hl.words
+    if all(re.fullmatch(r"\W*\d{1,3}\W*", w["text"]) for w in words):
+        return False
+    text = " ".join(w["text"] for w in words)
+    if not re.search(r"\w", text) and not re.fullmatch(r"[.\s]+", text):
+        return True  # a stroke or smudge read as '~' or '|'
+    conf = sum(w["conf"] for w in words) / len(words)
+    if len(words) == 1 and len(words[0]["text"]) <= 4:
+        return conf < 25  # a page number or a section numeral ('III', '9I')
+    # Words without a glued reference figure or quote ('started.*®' is 'started').
+    alpha = [re.sub(r"[^A-Za-z’'-]+$", "", w["text"]) for w in words
+             if re.search(r"[A-Za-z]{2}", w["text"])]
+    if len(alpha) <= 2 and any(len(re.sub(r"\W", "", t)) >= 4 and lex.valid(t) for t in alpha):
+        return False
+    if conf >= 50:
+        return False
+    known = sum(lex.valid(t) for t in alpha) / len(alpha) if alpha else 0.0
+    letters = [len(re.sub(r"\W", "", w["text"])) for w in words if re.search(r"[A-Za-z]", w["text"])]
+    short = len(letters) >= 3 and sum(letters) / len(letters) < 3.2  # 'pet An - P ae ee, on'
+    return conf < 35 or known < 0.6 or short
+
+
 def _attach_stray_figures(lines: list[ScanLine]) -> None:
     """A footnote figure that Tesseract read as a tiny line of its own ('a.' floating
     above the end of a line) goes back onto that line as a reference."""
@@ -606,6 +655,16 @@ def _attach_stray_figures(lines: list[ScanLine]) -> None:
 
 def _vote_line(row: list[dict], layer_tokens: list[str] | None, lex: Lexicon):
     """Final words of one line: [(text, analysis, (x0, x1) px)]."""
+    # A reference figure Tesseract read as a word of its own ('true.” ¹⁰', '⁸ See ...')
+    # has no text left once its raised ink is taken as the label; it takes no part in
+    # the vote and goes back in at its place.
+    figures = [i for i in row if not i["text"] and (i["sup_before"] or i["sup_after"])]
+    if figures:
+        rest = [i for i in row if i["text"]]
+        out = _vote_line(rest, layer_tokens, lex) if rest else []
+        for i in figures:
+            out.append(("", i, (i["bbox"][0], i["bbox"][2])))
+        return sorted(out, key=lambda w: w[2][0])
     tess = [i["text"] for i in row]
     if not layer_tokens:
         return [(i["text"], i, (i["bbox"][0], i["bbox"][2])) for i in row if i["text"]]
