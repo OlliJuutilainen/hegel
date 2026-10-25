@@ -62,11 +62,16 @@ against any OCR layer the PDF already carries. Both kinds can sit in one file.
 - Two-column pages are read column by column; titles and footnotes that span both
   columns stay in place.
 - Larger type → `#` headings; centered section numerals (I, II, III) → `##`.
-- Footnotes → `[^1]` references with the notes collected at the end; on scans the
-  small raised figures are found in the image and matched to the notes in order.
+- Footnotes → `[^1]` references with the notes collected at the end, also when the
+  font sets them as the characters `¹²³`; on scans the small raised figures are found
+  in the image and matched to the notes in order.
+- Letterspaced capitals (`P A R T  I`) are closed up; a numbered section heading in
+  bold body type (`1.1 Introduction`) becomes a heading one level below its chapter,
+  and a smaller subtitle under a title is joined with a colon.
 - Subscripts on scans → `s₁`; numbered premises → `1.` lists; block quotes → `>`.
-- Running heads, page numbers and JSTOR "This content downloaded…" stamps are
-  dropped; a JSTOR cover page becomes front matter (title, author, journal, volume,
+- Running heads, page numbers, JSTOR "This content downloaded…" stamps and the
+  citation footer on a chapter's first page (`… © Author 2024.` above `DOI: …`) are
+  dropped; a cover picture in front of a typeset book is skipped; a JSTOR cover page becomes front matter (title, author, journal, volume,
   issue, date, pages, URL).
 - Bibliographic data: a DOI printed on the first pages (the copyright page of a book,
   the first page of an article) is looked up in Crossref, and the record goes into the
