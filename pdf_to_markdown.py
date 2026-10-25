@@ -44,7 +44,7 @@ import shutil
 import statistics
 import sys
 from collections import Counter
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 
 try:
@@ -151,6 +151,8 @@ class _StyledAggregator(PDFPageAggregator):
 
 _LIGATURES = {"ﬀ": "ff", "ﬁ": "fi", "ﬂ": "fl", "ﬃ": "ffi", "ﬄ": "ffl", "ﬅ": "st", "ﬆ": "st"}
 _MARKER_LABEL = re.compile(r"^(?:\d{1,3}|[*∗†‡§¶]{1,3}|[a-z]|\?)$")
+_SUPERSCRIPTS = "⁰¹²³⁴⁵⁶⁷⁸⁹"
+_SUPERSCRIPT_DIGITS = str.maketrans(_SUPERSCRIPTS, "0123456789")
 
 
 @dataclass
@@ -215,15 +217,19 @@ def _line_glyphs(line) -> list[Glyph]:
             if not obj.upright:
                 continue  # rotated text: margin stamps, watermarks
             text = _LIGATURES.get(obj.get_text(), obj.get_text())
+            # Some fonts set note references as the characters '¹²³' rather than as
+            # small raised figures (Oxford's open access books).
+            sup = len(text) == 1 and text in _SUPERSCRIPTS
             out.append(
                 Glyph(
-                    text=text,
+                    text=text.translate(_SUPERSCRIPT_DIGITS) if sup else text,
                     italic=getattr(obj, "italic", False),
                     bold=getattr(obj, "bold", False),
                     size=obj.size,
                     x0=obj.x0,
                     x1=obj.x1,
                     y0=obj.y0,
+                    sup=sup,
                 )
             )
         elif isinstance(obj, LTAnno) and obj.get_text() == " " and out:
@@ -248,6 +254,45 @@ def _walk(obj, lines, rules, images):
         return
     for child in children:
         _walk(child, lines, rules, images)
+
+
+def _respace_tracked(glyphs: list[Glyph], size: float) -> list[Glyph]:
+    """'Y U J I N  N A G A S A W A' -> 'YUJIN NAGASAWA': in letterspaced capitals pdfminer
+    puts a space between every letter. The gaps between words are wider by about a
+    space's width, so they are told apart by size, not by pdfminer's spaces."""
+    tokens = "".join(g.text if not g.is_space else " " for g in glyphs).split()
+    singles = [t for t in tokens if len(t) == 1 and (t.isupper() or t.isdigit())]
+    if len(singles) < 4 or len(singles) < 0.6 * len(tokens):
+        return glyphs
+    solid = [g for g in glyphs if not g.is_space]
+    gaps = [b.x0 - a.x1 for a, b in zip(solid, solid[1:])]
+    if not gaps or min(gaps) > 0.15 * size:  # 'P Q R S' set with real word spaces
+        return glyphs
+    word_gap = min(gaps) + 0.15 * size
+    out = [solid[0]]
+    for g, gap in zip(solid[1:], gaps):
+        if gap > word_gap:
+            out.append(Glyph(" ", x0=out[-1].x1, x1=g.x0, y0=g.y0))
+        out.append(g)
+    return out
+
+
+def _style_through_words(glyphs: list[Glyph]) -> None:
+    """'*H*ō*j*ō*ki*' -> '*Hōjōki*': accented letters that the italic font lacks come from
+    another, upright font. Within an italic (bold) word they take the word's style."""
+    word: list[Glyph] = []
+    for g in glyphs + [Glyph(" ")]:
+        if not g.is_space and not g.sup:
+            word.append(g)
+            continue
+        letters = [x for x in word if x.text.isalpha()]
+        for attr in ("italic", "bold"):
+            odd = [x for x in letters if not getattr(x, attr)]
+            if odd and len(odd) < len(letters) and all(not x.text.isascii() for x in odd) \
+                    and sum(x.text.isascii() for x in letters) >= 2:
+                for x in odd:
+                    setattr(x, attr, True)
+        word = []
 
 
 def _build_rows(lines, page_no: int) -> list[Row]:
@@ -303,6 +348,8 @@ def _build_rows(lines, page_no: int) -> list[Row]:
         for g in visible:
             if g.size <= 0.8 * row.size and g.y0 > row.baseline + 0.2 * row.size:
                 g.sup = True
+        row.glyphs = _respace_tracked(row.glyphs, row.size)
+        _style_through_words(row.glyphs)
         rows.append(row)
     rows.sort(key=lambda r: -r.top)
     return rows
@@ -511,6 +558,20 @@ def extract_pages(
                         row.frame = frame
                         page.rows.append(row)
             out.append(page)
+
+    # A cover picture in front of a typeset book: OCR would read its artwork as words,
+    # and its display type would take the top heading levels.
+    cover = []
+    for page in out:
+        if not page.scanned:
+            break
+        cover.append(page)
+    typeset = sum(1 for page in out if not page.scanned and page.rows)
+    if cover and len(cover) <= 2 and typeset >= max(5, 4 * len(cover)):
+        out = out[len(cover):]
+        scans = scans[len(cover):]
+        print(f"NOTE: PDF page(s) {', '.join(str(p.number) for p in cover)}: a picture in front "
+              "of typeset pages (a cover); skipped.", file=sys.stderr)
 
     if scans:
         from pdf2image import convert_from_path
@@ -770,8 +831,14 @@ def crossref_front_matter(rec: dict, text: str) -> dict:
         # Springer names its imprint only in the book: 'This Palgrave Macmillan imprint is
         # published by the registered company Springer Nature Switzerland AG'.
         imprint = re.search(r"This (.{2,60}?) imprint is published by", re.sub(r"\s+", " ", text))
-        meta.update(publisher=imprint.group(1) if imprint else rec.get("publisher", ""),
-                    place=rec.get("publisher-location", ""),
+        publisher, place = rec.get("publisher", ""), rec.get("publisher-location") or ""
+        # Oxford's records glue the place on: 'Oxford University PressOxford'.
+        glued = re.fullmatch(r"(.+\b(?:Press|Publishers|Publishing|Verlag|Books))([A-Z][\w ]+)",
+                             publisher)
+        if glued:
+            publisher, place = glued.group(1), place or glued.group(2)
+        meta.update(publisher=imprint.group(1) if imprint else publisher,
+                    place=place,
                     edition=str(rec.get("edition-number") or ""),
                     isbn=", ".join(rec.get("ISBN") or []))
     return {k: v for k, v in meta.items() if v}
@@ -868,6 +935,30 @@ def _band_text(rows: list[Row]) -> str:
     return " ".join(r.plain_text for r in sorted(rows, key=lambda r: r.x0))
 
 
+_DOI_LINE = re.compile(r"^(?:DOI:?\s*|https?://(?:dx\.)?doi\.org/)10\.\d{4,9}/\S+$", re.I)
+
+
+def _strip_doi_footer(page: Page) -> None:
+    """Drop the citation footer of a chapter's (or article's) first page: a line with ©
+    right above a DOI line at the foot of the page, as Oxford sets it —
+    'The Problem of Evil for Atheists. Yujin Nagasawa, Oxford University Press.
+    © Yujin Nagasawa 2024.' / 'DOI: 10.1093/oso/9780198901884.003.0001'."""
+    rows = page.rows
+    if len(rows) < 2 or not _DOI_LINE.match(rows[-1].plain_text):
+        return
+    doi = rows[-1]
+    n = 1
+    while n < len(rows):
+        above, below = rows[-n - 1], rows[-n]
+        if abs(above.size - doi.size) > 0.1 * doi.size or \
+                above.baseline - below.baseline > 1.6 * doi.size:
+            break
+        n += 1
+    footer = rows[-n:]
+    if any("©" in r.plain_text for r in footer[:-1]):
+        page.rows = rows[:-n]
+
+
 def strip_furniture(pages: list[Page], body: float) -> None:
     """Drop each page's running head (top band) and bottom folio, keeping the folio."""
     for page in pages:
@@ -908,6 +999,7 @@ def strip_furniture(pages: list[Page], body: float) -> None:
         if is_head:
             page.folio = folio
             page.rows = rest
+        _strip_doi_footer(page)
         if page.rows:
             n = _edge_band(page.rows, False)
             band = page.rows[len(page.rows) - n:]
@@ -953,6 +1045,25 @@ def split_footnotes(page: Page, body: float) -> tuple[list[Row], list[Row]]:
     note carried over from the previous page.
     """
     rows = page.rows
+    refs: set[str] = set()  # the page's superscript labels
+    for r in rows:
+        label = ""
+        for g in r.glyphs + [Glyph(" ")]:
+            if g.sup and not g.is_space:
+                label += g.text
+            elif label:
+                refs.add(label)
+                label = ""
+
+    def opens_note(row: Row) -> bool:
+        label = _footnote_label(row)[0]
+        if label is None:
+            return False
+        # A full-size number opening a typeset line is a note only if something on the
+        # page refers to it: '198 Madison Avenue' on a copyright page is not note 198.
+        first = next(g for g in row.glyphs if not g.is_space)
+        return first.sup or row.fuzzy or not label.isdigit() or label in refs
+
     small_from = len(rows)
     while small_from > 0 and _size_class(rows[small_from - 1], body) == "s":
         small_from -= 1
@@ -963,12 +1074,12 @@ def split_footnotes(page: Page, body: float) -> tuple[list[Row], list[Row]]:
         has_rule = any(first.top - 2 <= y <= above + 2 for _, _, y in page.rules)
         if has_rule and start > 0:
             return rows[:start], rows[start:]
-        if _footnote_label(first)[0] is not None:
+        if opens_note(first):
             margin = min(r.x0 for r in rows[start:])
             while (
                 start > small_from
                 and abs(rows[start - 1].x0 - margin) <= rows[start - 1].size
-                and _footnote_label(rows[start - 1])[0] is None
+                and not opens_note(rows[start - 1])
             ):
                 start -= 1
             return rows[:start], rows[start:]
@@ -1038,6 +1149,19 @@ def _roman_heading(row: Row) -> str | None:
         return None
     fixed = text.rstrip(".").replace("l", "I").replace("1", "I")
     return fixed if re.fullmatch(r"[IVXL]+", fixed) else None
+
+
+_SECTION_NUMBER = re.compile(r"^\d{1,2}(?:\.\d{1,2}){1,3}\.?\s+\S")
+
+
+def _section_heading(block: Block) -> bool:
+    """A numbered section heading set in bold body type: '1.1 Introduction'."""
+    if block.kind not in ("p", "centered") or len(block.rows) > 2:
+        return False
+    if not _SECTION_NUMBER.match(block.rows[0].plain_text):
+        return False
+    glyphs = [g for r in block.rows for g in r.glyphs if not g.is_space and not g.sup]
+    return bool(glyphs) and all(g.bold for g in glyphs) and len(glyphs) < 120
 
 
 def build_blocks(pages: list[Page], body_rows: dict[int, list[Row]], body: float, page_markers: bool):
@@ -1152,10 +1276,18 @@ def build_blocks(pages: list[Page], body_rows: dict[int, list[Row]], body: float
     # Classify: headings by size rank, section numerals, list items, indented quotes.
     sizes = sorted({round(statistics.median(r.size for r in b.rows) * 2) / 2
                     for b in blocks if b.kind == "h"}, reverse=True)
+    chapter_level = 0  # the last heading's level, set by size
     for b in blocks:
         if b.kind == "h":
             size = round(statistics.median(r.size for r in b.rows) * 2) / 2
             b.level = min(sizes.index(size) + 1, 4)
+            chapter_level = b.level
+        elif _section_heading(b):
+            # '1.1 Introduction' in bold body type: one level below its chapter, two
+            # for '1.1.1'.
+            depth = b.rows[0].plain_text.split()[0].rstrip(".").count(".")
+            b.kind = "h"
+            b.level = min((chapter_level or len(sizes)) + depth, 4)
         elif b.kind == "centered":
             b.kind = "p"
             if len(b.rows) == 1 and _roman_heading(b.rows[0]):
@@ -1262,6 +1394,11 @@ def _join_rows(rows: list[Row], vocab, marks: dict[int, str] | None = None) -> l
                 continue
             if out[-1].is_space or (glyphs and glyphs[0].is_space):
                 pass
+            elif (
+                last is not None and last.text == "/" and len(out) >= 2 and not out[-2].is_space
+                and first is not None and first.text[:1].isalpha()
+            ):
+                pass  # 'atheists/' + 'non-theists': the break came after the slash
             else:
                 out.append(Glyph(" "))
         out.extend(glyphs)
@@ -1487,6 +1624,20 @@ def _block_text_fixups(text: str, block: Block, meta: dict | None) -> str:
     return text
 
 
+def _subtitle_colons(rows: list[Row]) -> list[Row]:
+    """A heading whose second part is set smaller is a title and its subtitle:
+    'The Problem of Evil' / 'Its Structure and Important Variations' -> 'The Problem of
+    Evil: Its Structure and Important Variations'. A chapter number or 'PART I' above a
+    title is not one (no lower-case letters)."""
+    out = list(rows)
+    for i in range(1, len(out)):
+        prev, row = out[i - 1], out[i]
+        text = prev.plain_text
+        if row.size < 0.9 * prev.size and re.search(r"[a-z]", text) and text[-1:] not in ".:;?!—–-":
+            out[i - 1] = replace(prev, glyphs=prev.glyphs + [Glyph(":")])
+    return out
+
+
 def to_markdown(pages: list[Page], page_markers: bool = False,
                 metadata: tuple[dict, dict] | None = None) -> str:
     """metadata: (weak, strong) front matter fields from document_metadata(); a JSTOR
@@ -1561,7 +1712,13 @@ def to_markdown(pages: list[Page], page_markers: bool = False,
         marks = dict(b.page_mark)
         if b.kind == "h" and 0 in marks:
             parts.append(f"{{p. {marks.pop(0)}}}")
-        glyphs = _join_rows(b.rows, vocab, marks)
+        rows = b.rows
+        if b.kind == "h":
+            rows = _subtitle_colons(rows)
+            if meta and meta.get("author") and _letters(_band_text(rows)) == _letters(meta["author"]):
+                parts.append(meta["author"])  # the title page's author line
+                continue
+        glyphs = _join_rows(rows, vocab, marks)
         if b.kind == "h":
             for g in glyphs:  # the heading mark already says it is display type
                 g.bold = False
