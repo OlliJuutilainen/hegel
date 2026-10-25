@@ -43,8 +43,10 @@ Both OCR tools prepare each scanned page before reading it (`ocr/preprocess.py`)
 - **Tilt**: each page is levelled (up to ±5°) before OCR.
 
 A clean, level, single-page scan passes through unchanged. `--no-cleanup` switches all
-of this off. Not handled: curved lines next to a book's spine, and handwriting in the
-margins (OCR reads pencil notes as stray words).
+of this off. Pencil notes in the margins and above the text (a reader's annotations)
+are left out: Tesseract reads handwriting with very low confidence and mostly as
+non-words. Not handled: curved lines next to a book's spine, and the reader's
+underlinings (OCR may lose an underlined word).
 
 ## PDF → Markdown
 
@@ -64,7 +66,9 @@ against any OCR layer the PDF already carries. Both kinds can sit in one file.
 - Larger type → `#` headings; centered section numerals (I, II, III) → `##`.
 - Footnotes → `[^1]` references with the notes collected at the end, also when the
   font sets them as the characters `¹²³`; on scans the small raised figures are found
-  in the image and matched to the notes in order.
+  in the image and matched to the notes in order, also a figure set apart after a
+  closing quote (`true.” ¹⁰`). Short notes set side by side on one line are split, and
+  a note whose figure OCR misread (`*° Ibid.`) still opens a note of its own.
 - Letterspaced capitals (`P A R T  I`) are closed up; a numbered section heading in
   bold body type (`1.1 Introduction`) becomes a heading one level below its chapter,
   also when it runs to a second line; a smaller subtitle under a title, or a title under
@@ -94,6 +98,9 @@ against any OCR layer the PDF already carries. Both kinds can sit in one file.
   (or `{p. pdf 7b}`, the PDF page and side, when no number could be read). A page
   without a printed number, such as a chapter's opening page, gets the number its
   neighbours imply (`{p. 7}` before page 8), unless the pages before and after disagree.
+  A page number OCR misread is set right by its neighbours: the two pages of a scanned
+  spread are numbered one apart, and old-style figures that lost their leading one
+  (`3` for 13, `09` for 109) or read it as `I` (`II` for 11) take the number around them.
 - Line-end hyphenation is undone, keeping real compounds (`self-consciousness`,
   `Being-for-self`, `so-called`).
 - Scans take a few seconds per page (`--dpi 300` is faster, `--no-ocr` skips OCR and
