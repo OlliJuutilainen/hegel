@@ -67,7 +67,14 @@ against any OCR layer the PDF already carries. Both kinds can sit in one file.
   in the image and matched to the notes in order.
 - Letterspaced capitals (`P A R T  I`) are closed up; a numbered section heading in
   bold body type (`1.1 Introduction`) becomes a heading one level below its chapter,
-  and a smaller subtitle under a title is joined with a colon.
+  also when it runs to a second line; a smaller subtitle under a title, or a title under
+  `PART I`, is joined with a colon. A heading's level comes from its title's type size,
+  not from a big chapter number above it. A half-title page's repeat of the book's
+  title is left out.
+- Small capitals and old-style figures in Adobe's private-use range (`U+F761` …) are
+  read as letters and figures (`45 BC`), so running heads set in them are found too.
+- Entries set with a hanging indent (a bibliography) stay apart; a numbered list
+  inside a footnote stays in its note.
 - Subscripts on scans → `s₁`; numbered premises → `1.` lists; block quotes → `>`.
 - Running heads, page numbers, JSTOR "This content downloaded…" stamps and the
   citation footer on a chapter's first page (`… © Author 2024.` above `DOI: …`) are
@@ -84,7 +91,9 @@ against any OCR layer the PDF already carries. Both kinds can sit in one file.
 - The front matter keys are the ones [Latomo](https://ollijuutilainen.github.io/luin/latomo.html)
   reads for a reference (`type: academic` selects a scholarly text there).
   `--page-markers` puts the printed page number where each page begins, as `{p. 25}`
-  (or `{p. pdf 7b}`, the PDF page and side, when no number could be read).
+  (or `{p. pdf 7b}`, the PDF page and side, when no number could be read). A page
+  without a printed number, such as a chapter's opening page, gets the number its
+  neighbours imply (`{p. 7}` before page 8), unless the pages before and after disagree.
 - Line-end hyphenation is undone, keeping real compounds (`self-consciousness`,
   `Being-for-self`, `so-called`).
 - Scans take a few seconds per page (`--dpi 300` is faster, `--no-ocr` skips OCR and
