@@ -210,6 +210,17 @@ class Page:
     part: str = ""  # 'a' / 'b' for the left and right page of a spread
 
 
+def _adobe_expert(text: str) -> str:
+    """Small capitals and old-style figures in Adobe's private-use range (U+F721–F7FF):
+    the character is U+0021–00FF shifted by 0xF700, e.g. U+F761 'a' small capital,
+    U+F731 old-style '1'. Oxford sets its running heads and 'BCE' this way; left as
+    they are they show as boxes and hide the running heads from strip_furniture."""
+    if len(text) != 1 or not 0xF721 <= ord(text) <= 0xF7FF:
+        return text
+    base = chr(ord(text) - 0xF700)
+    return base.upper() if base.isalpha() else base
+
+
 def _line_glyphs(line) -> list[Glyph]:
     out: list[Glyph] = []
     for obj in line:
@@ -217,6 +228,7 @@ def _line_glyphs(line) -> list[Glyph]:
             if not obj.upright:
                 continue  # rotated text: margin stamps, watermarks
             text = _LIGATURES.get(obj.get_text(), obj.get_text())
+            text = _adobe_expert(text)
             # Some fonts set note references as the characters '¹²³' rather than as
             # small raised figures (Oxford's open access books).
             sup = len(text) == 1 and text in _SUPERSCRIPTS
@@ -256,10 +268,29 @@ def _walk(obj, lines, rules, images):
         _walk(child, lines, rules, images)
 
 
+def _drop_false_spaces(glyphs: list[Glyph], size: float) -> list[Glyph]:
+    """'THE P ROBLEM' -> 'THE PROBLEM': a space that pdfminer guessed (it has no width of
+    its own) where the letters are no farther apart than the row's other letters."""
+    solid = [i for i, g in enumerate(glyphs) if not g.is_space]
+    gaps = {a: glyphs[b].x0 - glyphs[a].x1 for a, b in zip(solid, solid[1:])}
+    if len(gaps) < 5:
+        return glyphs
+    letter_gap = statistics.median(gaps.values())
+    out = []
+    for i, g in enumerate(glyphs):
+        if g.is_space and g.x0 == g.x1 and out and not out[-1].is_space:
+            a = next((j for j in range(i - 1, -1, -1) if not glyphs[j].is_space), None)
+            if a in gaps and gaps[a] <= letter_gap + 0.05 * size:
+                continue
+        out.append(g)
+    return out
+
+
 def _respace_tracked(glyphs: list[Glyph], size: float) -> list[Glyph]:
     """'Y U J I N  N A G A S A W A' -> 'YUJIN NAGASAWA': in letterspaced capitals pdfminer
     puts a space between every letter. The gaps between words are wider by about a
     space's width, so they are told apart by size, not by pdfminer's spaces."""
+    glyphs = _drop_false_spaces(glyphs, size)
     tokens = "".join(g.text if not g.is_space else " " for g in glyphs).split()
     singles = [t for t in tokens if len(t) == 1 and (t.isupper() or t.isdigit())]
     if len(singles) < 4 or len(singles) < 0.6 * len(tokens):
@@ -1013,6 +1044,53 @@ def strip_furniture(pages: list[Page], body: float) -> None:
                 page.rows = page.rows[: len(page.rows) - n]
 
 
+def _roman(n: int) -> str:
+    out = ""
+    for value, numeral in ((1000, "m"), (900, "cm"), (500, "d"), (400, "cd"), (100, "c"),
+                           (90, "xc"), (50, "l"), (40, "xl"), (10, "x"), (9, "ix"), (5, "v"),
+                           (4, "iv"), (1, "i")):
+        while n >= value:
+            out, n = out + numeral, n - value
+    return out
+
+
+def _folio_value(folio: str) -> tuple[str, int] | None:
+    if folio.isdigit():
+        return "arabic", int(folio)
+    low = folio.lower()
+    for n in range(1, 200):
+        if _roman(n) == low:
+            return ("roman" if folio.islower() else "ROMAN"), n
+    return None
+
+
+def _infer_folios(pages: list[Page]) -> None:
+    """A chapter's opening page usually has no printed number; it is one less than the
+    next page's (or one more than the previous page's). Counted from numbered pages at
+    most three PDF pages away, and only when the pages on both sides agree."""
+    known = {p.pdf_page: _folio_value(p.folio) for p in pages
+             if p.folio and not p.part and _folio_value(p.folio)}
+    for page in pages:
+        if page.folio or page.part or not page.rows:
+            continue
+        guesses = set()
+        for k in (1, 2, 3):
+            if page.pdf_page + k in known:
+                kind, v = known[page.pdf_page + k]
+                guesses.add((kind, v - k))
+                break
+        for k in (1, 2, 3):
+            if page.pdf_page - k in known:
+                kind, v = known[page.pdf_page - k]
+                guesses.add((kind, v + k))
+                break
+        if len(guesses) == 1:
+            kind, v = guesses.pop()
+            if v >= 1:
+                page.folio = str(v) if kind == "arabic" else (
+                    _roman(v) if kind == "roman" else _roman(v).upper())
+
+
 def _footnote_label(row: Row) -> tuple[str | None, int]:
     """Footnote label at the start of a row and the glyph index where its text begins."""
     vis = [(i, g) for i, g in enumerate(row.glyphs) if not g.is_space]
@@ -1035,6 +1113,29 @@ def _footnote_label(row: Row) -> tuple[str | None, int]:
     return None, 0
 
 
+def _sup_labels(rows: list[Row]) -> set[str]:
+    """The superscript labels on a page: '11' for a raised '11' after a word."""
+    labels: set[str] = set()
+    for r in rows:
+        label = ""
+        for g in r.glyphs + [Glyph(" ")]:
+            if g.sup and not g.is_space:
+                label += g.text
+            elif label:
+                labels.add(label)
+                label = ""
+    return labels
+
+
+def _labels_note(row: Row, label: str, refs: set[str]) -> bool:
+    """Whether a footnote label found at the start of a row really opens a note. A
+    full-size number opening a typeset line does only if something on the page refers
+    to it: '198 Madison Avenue' on a copyright page is not note 198, nor is '1.' in a
+    list inside a note."""
+    first = next(g for g in row.glyphs if not g.is_space)
+    return first.sup or row.fuzzy or not label.isdigit() or label in refs
+
+
 def split_footnotes(page: Page, body: float) -> tuple[list[Row], list[Row]]:
     """Split a page's rows into (body rows, footnote rows).
 
@@ -1045,24 +1146,11 @@ def split_footnotes(page: Page, body: float) -> tuple[list[Row], list[Row]]:
     note carried over from the previous page.
     """
     rows = page.rows
-    refs: set[str] = set()  # the page's superscript labels
-    for r in rows:
-        label = ""
-        for g in r.glyphs + [Glyph(" ")]:
-            if g.sup and not g.is_space:
-                label += g.text
-            elif label:
-                refs.add(label)
-                label = ""
+    refs = _sup_labels(rows)
 
     def opens_note(row: Row) -> bool:
         label = _footnote_label(row)[0]
-        if label is None:
-            return False
-        # A full-size number opening a typeset line is a note only if something on the
-        # page refers to it: '198 Madison Avenue' on a copyright page is not note 198.
-        first = next(g for g in row.glyphs if not g.is_space)
-        return first.sup or row.fuzzy or not label.isdigit() or label in refs
+        return label is not None and _labels_note(row, label, refs)
 
     small_from = len(rows)
     while small_from > 0 and _size_class(rows[small_from - 1], body) == "s":
@@ -1154,14 +1242,48 @@ def _roman_heading(row: Row) -> str | None:
 _SECTION_NUMBER = re.compile(r"^\d{1,2}(?:\.\d{1,2}){1,3}\.?\s+\S")
 
 
+_HEADING_LABEL = re.compile(
+    r"^(?:(?:PART|Part|BOOK|Book|CHAPTER|Chapter|SECTION|Section)\s+)?(?:\d{1,3}|[IVXLC]{1,7})\.?$")
+
+
+def _heading_size(block: Block) -> float:
+    """A heading's size is its title's: not a big chapter number or 'PART I' above it,
+    nor a smaller subtitle below (the median of the lines mixed them up)."""
+    rows = [r for r in block.rows if not _HEADING_LABEL.match(r.plain_text)] or block.rows
+    return round(max(r.size for r in rows) * 2) / 2
+
+
+def _join_wrapped_sections(blocks: list[Block]) -> list[Block]:
+    """A centered section heading that runs to a second line: '2.2 Being a Traditional
+    Theist Is Neither Necessary nor' / 'Sufficient for Being a Target …'."""
+    out: list[Block] = []
+    for b in blocks:
+        prev = out[-1] if out else None
+        if (
+            prev is not None
+            and _section_heading(prev)
+            and b.kind in ("p", "centered")
+            and len(b.rows) == 1
+            and not _SECTION_NUMBER.match(b.rows[0].plain_text)
+            and all(g.bold for g in b.rows[0].glyphs if not g.is_space and not g.sup)
+            and b.rows[0].page == prev.rows[-1].page
+            and abs(b.rows[0].size - prev.rows[-1].size) <= 0.1 * b.rows[0].size
+            and 0 < prev.rows[-1].baseline - b.rows[0].baseline <= 1.6 * b.rows[0].size
+        ):
+            prev.rows.extend(b.rows)
+            continue
+        out.append(b)
+    return out
+
+
 def _section_heading(block: Block) -> bool:
     """A numbered section heading set in bold body type: '1.1 Introduction'."""
-    if block.kind not in ("p", "centered") or len(block.rows) > 2:
+    if block.kind not in ("p", "centered") or len(block.rows) > 3:
         return False
     if not _SECTION_NUMBER.match(block.rows[0].plain_text):
         return False
     glyphs = [g for r in block.rows for g in r.glyphs if not g.is_space and not g.sup]
-    return bool(glyphs) and all(g.bold for g in glyphs) and len(glyphs) < 120
+    return bool(glyphs) and all(g.bold for g in glyphs) and len(glyphs) < 200
 
 
 def build_blocks(pages: list[Page], body_rows: dict[int, list[Row]], body: float, page_markers: bool):
@@ -1173,6 +1295,7 @@ def build_blocks(pages: list[Page], body_rows: dict[int, list[Row]], body: float
     blocks: list[Block] = []
     cur: Block | None = None
     prev: Row | None = None
+    hanging = None  # ((page, frame), margin) of the last block set with a hanging indent
 
     def geom(r: Row) -> tuple[float, float]:
         return geometry[(r.page, r.frame)]
@@ -1213,7 +1336,7 @@ def build_blocks(pages: list[Page], body_rows: dict[int, list[Row]], body: float
                 ):
                     new = True
                 elif cls == "h":
-                    new = i == 0 or prev.baseline - row.baseline > 2.0 * em
+                    new = i == 0 or prev.baseline - row.baseline > 2.5 * em
                 elif centered or cur.kind == "centered":
                     new = True
                 elif same_frame and prev.baseline - row.baseline > 1.45 * pitch:
@@ -1240,6 +1363,23 @@ def build_blocks(pages: list[Page], body_rows: dict[int, list[Row]], body: float
                     and row.x0 < cur.rows[-1].x0 - 0.5 * em
                 ):
                     new = True  # body resumes after an indented block quote
+                elif (
+                    same_frame
+                    and len(cur.rows) >= 2
+                    and 0.5 * em < cur.rows[1].x0 - cur.rows[0].x0 <= 3 * em
+                    and all(abs(r.x0 - cur.rows[1].x0) <= 0.3 * em for r in cur.rows[2:])
+                    and abs(row.x0 - cur.rows[0].x0) <= 0.3 * em
+                ):
+                    new = True  # back out to a hanging indent's margin: the next entry
+                elif (
+                    same_frame
+                    and len(cur.rows) == 1
+                    and hanging is not None
+                    and hanging[0] == (row.page, row.frame)
+                    and abs(prev.x0 - hanging[1]) <= 0.3 * em
+                    and abs(row.x0 - hanging[1]) <= 0.3 * em
+                ):
+                    new = True  # a one-line entry among hanging-indent entries
                 else:
                     ends = prev.plain_text[-1:] in ".?!:\"”’)"
                     if prev.x1 < p_right - 2 * em and ends:
@@ -1264,6 +1404,14 @@ def build_blocks(pages: list[Page], body_rows: dict[int, list[Row]], body: float
                 cur.rows.append(row)
                 prev = row
                 continue
+            if new and cur is not None and len(cur.rows) >= 2:
+                first, second = cur.rows[0], cur.rows[1]
+                if (
+                    (first.page, first.frame) == (second.page, second.frame)
+                    and 0.5 * first.size < second.x0 - first.x0 <= 3 * first.size
+                    and all(abs(r.x0 - second.x0) <= 0.3 * first.size for r in cur.rows[2:])
+                ):
+                    hanging = ((first.page, first.frame), first.x0)
             if new:
                 kind = "h" if cls == "h" else ("centered" if centered else "p")
                 cur = Block(kind=kind, rows=[])
@@ -1274,12 +1422,12 @@ def build_blocks(pages: list[Page], body_rows: dict[int, list[Row]], body: float
             prev = row
 
     # Classify: headings by size rank, section numerals, list items, indented quotes.
-    sizes = sorted({round(statistics.median(r.size for r in b.rows) * 2) / 2
-                    for b in blocks if b.kind == "h"}, reverse=True)
+    blocks = _join_wrapped_sections(blocks)
+    sizes = sorted({_heading_size(b) for b in blocks if b.kind == "h"}, reverse=True)
     chapter_level = 0  # the last heading's level, set by size
     for b in blocks:
         if b.kind == "h":
-            size = round(statistics.median(r.size for r in b.rows) * 2) / 2
+            size = _heading_size(b)
             b.level = min(sizes.index(size) + 1, 4)
             chapter_level = b.level
         elif _section_heading(b):
@@ -1627,13 +1775,15 @@ def _block_text_fixups(text: str, block: Block, meta: dict | None) -> str:
 def _subtitle_colons(rows: list[Row]) -> list[Row]:
     """A heading whose second part is set smaller is a title and its subtitle:
     'The Problem of Evil' / 'Its Structure and Important Variations' -> 'The Problem of
-    Evil: Its Structure and Important Variations'. A chapter number or 'PART I' above a
-    title is not one (no lower-case letters)."""
+    Evil: Its Structure and Important Variations'. 'PART I' above a title takes a colon
+    too, as in the contents; a bare chapter number does not."""
     out = list(rows)
     for i in range(1, len(out)):
         prev, row = out[i - 1], out[i]
         text = prev.plain_text
-        if row.size < 0.9 * prev.size and re.search(r"[a-z]", text) and text[-1:] not in ".:;?!—–-":
+        subtitle = row.size < 0.9 * prev.size and re.search(r"[a-z]", text)
+        part = re.match(r"^(?:PART|Part|BOOK|Book)\s+[IVXLC\d]+$", text) and not _HEADING_LABEL.match(row.plain_text)
+        if (subtitle or part) and text[-1:] not in ".:;?!—–-":
             out[i - 1] = replace(prev, glyphs=prev.glyphs + [Glyph(":")])
     return out
 
@@ -1665,6 +1815,7 @@ def to_markdown(pages: list[Page], page_markers: bool = False,
     body = sizes.most_common(1)[0][0]
 
     strip_furniture(pages, body)
+    _infer_folios(pages)
     _harmonize_variables(pages)
     vocab = _vocabulary(pages)
 
@@ -1678,8 +1829,11 @@ def to_markdown(pages: list[Page], page_markers: bool = False,
         main, foot = split_footnotes(page, body)
         body_rows[page.number] = main
         ids: dict[str, int] = {}
+        refs = _sup_labels(page.rows)
         for row in foot:
             label, start = _footnote_label(row)
+            if label is not None and not _labels_note(row, label, refs):
+                label = None  # '1. Traditional theism is …', a list inside the note
             if label is None:
                 if notes:
                     notes[-1][1].append(row)  # continued from the previous page or line
@@ -1696,8 +1850,19 @@ def to_markdown(pages: list[Page], page_markers: bool = False,
     blocks = build_blocks(pages, body_rows, body, page_markers)
     _assign_note_refs(blocks, notes_by_page)
     parts: list[str] = [_yaml_front_matter(meta)] if meta else []
+    # A half-title page repeats the book's title before the title page: keep the one
+    # set largest, drop those in front of it.
+    half_titles: set[int] = set()
+    if meta and meta.get("title"):
+        titled = [b for b in blocks if b.kind == "h"
+                  and _letters(" ".join(r.plain_text for r in b.rows)) == _letters(meta["title"])]
+        if titled:
+            main = max(range(len(titled)), key=lambda i: _heading_size(titled[i]))
+            half_titles = {id(b) for b in titled[:main]}
     seen_heading = False
     for b in blocks:
+        if id(b) in half_titles:
+            continue
         seen_heading = seen_heading or b.kind == "h"
         if jstor and not seen_heading and re.match(r"^Vol(ume|\.)\s*\d", _band_text(b.rows)):
             continue  # the journal's issue line; the front matter has it
