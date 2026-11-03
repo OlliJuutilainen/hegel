@@ -28,6 +28,14 @@ Linjaston kannalta:
   sitä ei käytetä ennen kuin OCR:n paikallisuus on selvä.
 - Dropbox-latausta valikossa ei ole.
 
+## Kuvausresoluutio (3.11.2026)
+
+Valittuna oli 8M (3840 × 2160, 16:9). Suositus on 12M (4000 × 3000, 4:3), joka on listan suurin. Se on kummaltakin
+sivultaan vähintään yhtä suuri kuin 16:9-kuva (4000 ≥ 3840 ja 3000 ≥ 2160), joten sivu saa samalta etäisyydeltä
+vähintään yhtä monta pikseliä, ja sivun leveydelle jää enemmän tilaa. Lyhyellä sivulla pikseleitä on 39 % enemmän.
+Haittana ovat isommat tiedostot. Viedyn JPG:n todellinen koko tarkistetaan ensimmäisestä viennistä
+(`sips -g pixelWidth -g pixelHeight sivu.jpg`).
+
 ## Avoimet kokeet (Nordilla)
 
 1. **Tallenna galleriaan** ja tiedoston siirto Macille: kuvan koko pikseleinä ja JPEG-laatu.
