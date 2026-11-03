@@ -216,3 +216,6 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# Linjasto: skannaukset, työtiedostot ja tulokset (docs/linjasto.md, luku 1)
+local/
