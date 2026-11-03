@@ -51,6 +51,20 @@ Havainnot:
   siis liikaa. Avuksi tarvitaan kirjan oma sanasto (sanat, jotka toistuvat korkealla luotettavuudella), vanhan
   oikeinkirjoituksen säännöt ja Tesseractin luotettavuus.
 
+### Nimet ja diakriitit; kaksi lukijaa
+
+- Saksan mallin merkistössä ei ole ř:ää, á:ta, č:tä, š:tä, ž:ää, ą:ta, ę:tä, ł:ää tai ő:tä, joten se ei voi lukea
+  nimeä *Jindřich Karásek* oikein (*Jindfich Karäsek*). tessdata_bestin kirjaimistomalli `script/Latin` (101 Mt)
+  sisältää ne kaikki ja luki nimen oikein sekä alkuperäisestä että 2× rajauksesta.
+- Koko sivulla `script/Latin` sai CER 0,48 % (deu 0,55 %), mutta kirjainvirheitä tuli enemmän (CER (kirj.) 0,31 %
+  vs. 0,24 %). Sen omia virheitä olivat *Vermiünfteln*, *niünftigen* ja *muß* → *mu*.
+- Kun deu ja `script/Latin` ovat kaksi lukijaa ja sanat kohdistetaan kultaan:
+  - 599 sanaa on samoja ja oikein.
+  - 18 sanaa eroaa. Niistä 16:ssa toinen lukijoista on oikeassa.
+  - 6 sanaa on samoja mutta väärin: nuoli kahdesti `>`, yksi piste pilkkuna, *selner*, *wj.* ja *allgemej.*.
+    Niistä neljä on ei-sanoja tai epätavallisia merkkejä, joten liputus löytäisi ne. Vain piste–pilkku menisi
+    läpi huomaamatta.
+
 ### Kursiivi
 
 Mittaus `ocr/scanpage.word_slant`illa. Sivulla on 10 kursiivisanaa.
