@@ -3,6 +3,7 @@
 
     python linja.py valmistele <kirja> [--kielet kant-lexikon] [--lahde KANSIO] [--debug] [--uudelleen]
     python linja.py kokoa <kirja> [--otsikko ...] [--teos ...] [--sivumerkki nakyva]
+    python linja.py tilasto <kirja>
     python linja.py siivoa <kirja>
 
 Kuvat ovat kansiossa local/work/<kirja>/alkup/ (tai ne kopioidaan sinne --lahde-kansiosta). Niitä ei muokata.
@@ -147,6 +148,39 @@ def kokoa_(args, aset: dict) -> int:
     return 0
 
 
+def tilasto(args, aset: dict) -> int:
+    """Yhteenveto ilman kirjan tekstiä: kirjausten tilat, sivumerkit, liputussyyt, toisen lukijan merkit."""
+    import collections
+    import csv
+    import re
+    k = A.kirja(args.kirja, aset)
+    loki = k.out / "muutokset.csv"
+    if loki.exists():
+        with open(loki, encoding="utf-8") as f:
+            tilat = collections.Counter(r["tila"] for r in csv.DictReader(f))
+        print("Kirjaukset:", dict(sorted(tilat.items())))
+    md = k.out / f"{args.kirja}.md"
+    if md.exists():
+        merkit = re.findall(r"<!-- s\. (\S+)", md.read_text(encoding="utf-8"))
+        tuntemattomat = sum(1 for m in merkit if m == "?")
+        print(f"Sivumerkit: {len(merkit)}, joista tuntemattomia {tuntemattomat}: {' '.join(merkit)}")
+    syyt, lyhyet, merkit2 = collections.Counter(), collections.Counter(), collections.Counter()
+    sivut = sorted(k.sivut.glob("s*.json"))
+    for p in sivut:
+        d = json.loads(p.read_text(encoding="utf-8"))
+        for r in d["rivit"]:
+            for w in r["sanat"]:
+                syyt.update(w["liput"])
+                if w["liput"] and len(w["teksti"]) <= 2:
+                    lyhyet[w["teksti"]] += 1
+                if w["peruste"]:
+                    merkit2[w["peruste"].split("merkki ")[1].split(" ")[0]] += 1
+    print(f"Sivuja {len(sivut)}. Liputussyyt (sana voi saada monta):", dict(syyt.most_common()))
+    print("Yleisimmät liputetut 1–2 merkin sanat:", lyhyet.most_common(12))
+    print("Toisen lukijan lukemat merkin mukaan:", dict(merkit2))
+    return 0
+
+
 def siivoa(args, aset: dict) -> int:
     k = A.kirja(args.kirja, aset)
     for d in (k.naamio, k.lukijat, k.sivut, k.paketti, k.work / "debug"):
@@ -170,11 +204,13 @@ def main() -> int:
     c.add_argument("--otsikko")
     c.add_argument("--teos")
     c.add_argument("--sivumerkki", choices=["kommentti", "nakyva"], default="kommentti")
+    tl = sub.add_parser("tilasto", help="yhteenveto ilman kirjan tekstiä")
+    tl.add_argument("kirja")
     s = sub.add_parser("siivoa", help="poista välivaiheet")
     s.add_argument("kirja")
     args = ap.parse_args()
     aset = A.lue_asetukset()
-    return {"valmistele": valmistele, "kokoa": kokoa_, "siivoa": siivoa}[args.komento](args, aset)
+    return {"valmistele": valmistele, "kokoa": kokoa_, "tilasto": tilasto, "siivoa": siivoa}[args.komento](args, aset)
 
 
 if __name__ == "__main__":
