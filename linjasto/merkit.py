@@ -15,6 +15,7 @@ from scipy import ndimage
 KOKO = (24, 16)  # mallikuvan leveys, korkeus
 SEKAANNUKSET = set(">&+-—–2")
 RAJA = 0.45  # korrelaatio mallikuvaan; testisivuilla nuolet 0,47–0,91, muut kuviot enintään 0,34
+RAJA_LEVEA = 0.85  # mallia leveämmälle kuviolle (kokonainen nuoli varsineen); Vernunft-ajossa nuolet 0,88–0,97
 
 
 def _kuviot(g: np.ndarray, bbox) -> list[tuple]:
@@ -85,18 +86,24 @@ class Nuoli:
         if self.malli is None or not s.teksti or s.teksti[0] not in SEKAANNUKSET | {"("}:
             return None
         odotettu = self.mittasuhde[0] * h  # nuolen leveys pikseleinä tällä rivillä
-        for k, (x0, y0, x1, y1, m) in enumerate(_kuviot(g, (s.x0, s.y0, s.x1, s.y1))[:2]):
-            if x1 - x0 > 1.3 * odotettu:
-                # Nuoli kiinni seuraavassa kirjaimessa ('-Spontaneität'): verrataan vain nuolen levyistä alkua.
-                m = m[:, :max(1, round(odotettu))]
-                x1 = x0 + m.shape[1]
-            lw, lh = (x1 - x0) / h, (y1 - y0) / h
-            if not (0.65 <= lw / self.mittasuhde[0] <= 1.5 and 0.65 <= lh / self.mittasuhde[1] <= 1.5):
-                continue
+        def korrelaatio(m):
             a = _normaali(m)
-            r = float((a * self.malli).sum() / (np.linalg.norm(a) * np.linalg.norm(self.malli) + 1e-9))
-            if r >= RAJA:
+            return float((a * self.malli).sum() / (np.linalg.norm(a) * np.linalg.norm(self.malli) + 1e-9))
+
+        for k, (x0, y0, x1, y1, m) in enumerate(_kuviot(g, (s.x0, s.y0, s.x1, s.y1))[:2]):
+            lw, lh = (x1 - x0) / h / self.mittasuhde[0], (y1 - y0) / h / self.mittasuhde[1]
+            if not 0.65 <= lh <= 1.5:
+                continue
+            if 0.65 <= lw <= 1.5 and korrelaatio(m) >= RAJA:
                 return k
+            if 1.5 < lw <= 2.0 and korrelaatio(m) >= RAJA_LEVEA:
+                # Varrellinen nuoli: Vernunft-ajossa mallin mediaani oli kapea (pelkkä kärki), ja kokonaiset
+                # nuolet olivat 1,4–1,8 kertaa leveämpiä, korrelaatio silti 0,88–0,97 (3.11.2026).
+                return k
+            if lw > 1.3:
+                # Nuoli kiinni seuraavassa kirjaimessa ('-Spontaneität'): verrataan vain nuolen levyistä alkua.
+                if korrelaatio(m[:, :max(1, round(odotettu))]) >= RAJA:
+                    return k
         return None
 
 

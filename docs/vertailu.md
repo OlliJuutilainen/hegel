@@ -122,3 +122,11 @@ Kahdella testisivulla (puolikokoiset chattikuvat) nuolia on 10. Niistä tunniste
 korvausta tullut. Koottu md poikkesi kullasta CER 0,52 % → 0,42 %. Nuolten korrelaatio oli 0,47–0,91 ja muiden
 kokoehdon läpäisseiden kuvioiden enintään 0,34. Raja on 0,45, eli väli on kapea. Täysikokoisilla sivuilla väli
 tarkistetaan muutoslokin tilasta `nuoli_tunnistettu`.
+
+Vernunft, 33 sivua (Ollin Mac, 3.11.2026): mallikuva syntyi 80 tapauksesta, ja nuolia korjattiin 73.
+- Alkuperäiset lukemat: `>` 54, `&` 9, `—` 2 ja loput kiinni seuraavaan sanaan. Numeroita joukossa ei ollut.
+- Liputettuja yksinäisiä `>`-merkkejä jäi 30. Niistä 13 oli kokonaisia nuolia varsineen: kuvio 1,4–1,8 kertaa mallia
+  leveämpi, korrelaatio 0,88–0,97. Mallin mediaani on kapea, koska useimmissa selvissä tapauksissa varsi ja kärki
+  ovat erillisiä kuvioita. Nyt tällainen leveä kuvio hyväksytään korrelaatiolla ≥ 0,85.
+- Loput 17 ovat joko kapeita kuvioita, joiden korrelaatio on 0,09–0,44, tai litteitä viivoja (korkeus 0,04–0,17
+  mallista). Ne jäävät liputetuiksi.
