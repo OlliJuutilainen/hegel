@@ -74,11 +74,14 @@ def juoksevat(sivut: list[dict], osuus: float) -> tuple[dict[int, set], dict[int
             luvut = [int(w["teksti"]) for r in vyo for w in r["sanat"] if NUMERO.match(w["teksti"])]
             if len(luvut) == 1 and sum(len(r["sanat"]) for r in vyo) <= 10:
                 ehdokas.setdefault(s["sivu"], (luvut[0], vyo, i))
-    erot = Counter(n - i for n, _, i in ehdokas.values())
-    ero = erot.most_common(1)[0][0] if erot and (len(sivut) >= 3 and erot.most_common(1)[0][1] >= 2) else None
+    # Numero kelpaa, jos se sopii järjestykseen ainakin yhden enintään kolmen sivun päässä olevan ehdokkaan kanssa.
+    # Paikallinen vertailu sietää puuttuvan sivun: Vernunft-erästä puuttui _21.jpg, ja koko erän yhteinen
+    # erotus hylkäsi kaikki sen jälkeiset sivut (3.11.2026).
+    jono = [(i, n) for n, _, i in ehdokas.values()]
     for sivu, (n, vyo, i) in ehdokas.items():
         pieni_era = len(sivut) < 3 and all(len(r["sanat"]) <= 6 for r in vyo)
-        if (ero is not None and n - i == ero) or pieni_era:
+        sopii = any(0 < abs(j - i) <= 3 and m - n == j - i for j, m in jono)
+        if (len(sivut) >= 3 and sopii) or pieni_era:
             numerot[sivu] = n
             poista[sivu].update(r["id"] for r in vyo)
     if len(sivut) >= 3:
@@ -95,6 +98,17 @@ def juoksevat(sivut: list[dict], osuus: float) -> tuple[dict[int, set], dict[int
 
 def paattele_numerot(jarjestys: list[int], numerot: dict, loki: list) -> dict:
     out = dict(numerot)
+    tunnetut = [(i, numerot[s]) for i, s in enumerate(jarjestys) if numerot[s] is not None]
+    for (i, n), (j, m) in zip(tunnetut, tunnetut[1:]):
+        if m - n > j - i:  # numeroita on enemmän kuin kuvia välissä: sivu tai sivuja puuttuu
+            if j != i + 1:
+                puuttuu = f"{m - n - (j - i)} sivua välillä {n}–{m}"
+            elif m - n <= 4:
+                puuttuu = ", ".join(str(x) for x in range(n + 1, m))
+            else:
+                puuttuu = f"{n + 1}–{m - 1}"
+            loki.append({"sivu": jarjestys[j], "id": "", "lukemat": "", "valittu": "", "tila": "sivu_puuttuu",
+                         "peruste": f"puuttuu: {puuttuu}"})
     for i, s in enumerate(jarjestys):
         if out[s] is not None:
             continue
