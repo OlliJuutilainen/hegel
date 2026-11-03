@@ -80,6 +80,12 @@ eng, fin, deu, lat, grc, ell, ita, fra, dan, lit, swe, deu_latf (12,9 Mt) ja scr
   (`local/tessdata/`, käytetään `--tessdata-dir`- tai `TESSDATA_PREFIX`-asetuksella), joten järjestelmään ei tarvitse
   koskea.
 - Löytyvät: `/usr/local/bin/brew`, `/opt/local/bin/port` ja `/usr/local/bin/adb`.
+- Python: `/usr/local/bin/python3` on 3.14.5. MacPortsista on lisäksi python312 (3.12.13) ja python314 (3.14.5).
+  Frameworks-asennusta ei ole.
+- poppler 26.02 on asennettu MacPortsista (`/opt/local/bin/pdftoppm`).
+- tessdata_best on ladattu kansioon `~/hegel/local/tessdata/`: deu, eng, fin, grc, lat ja script/Latin.
+  `tesseract --tessdata-dir` löytää ne.
+- Note Air3:n näyttö on 1404 × 1872 ja 227 ppi (julkaistut tiedot, `docs/vertailu.md`).
 
 Alkuperäinen tarkistuslista:
 
