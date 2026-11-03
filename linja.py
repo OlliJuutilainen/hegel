@@ -191,7 +191,57 @@ def tilasto(args, aset: dict) -> int:
     print(f"Sivuja {len(sivut)}. Liputussyyt (sana voi saada monta):", dict(syyt.most_common()))
     print("Yleisimmät liputetut 1–2 merkin sanat:", lyhyet.most_common(12))
     print("Korjatut merkit (toinen lukija tai kuva):", dict(merkit2))
+    nuolet = collections.Counter()
+    for p in sivut:
+        d = json.loads(p.read_text(encoding="utf-8"))
+        for r in d["rivit"]:
+            for w in r["sanat"]:
+                if w["peruste"].startswith("nuoli"):
+                    alku = w["lukemat"]["pää"]
+                    nuolet[alku if len(alku) <= 2 else alku[:2] + "…"] += 1
+    if nuolet:
+        print("Nuoleksi korjatut alkuperäiset lukemat (alku):", dict(nuolet.most_common()))
+    if args.nuolet:
+        _nuolidiagnoosi(k)
     return 0
+
+
+def _nuolidiagnoosi(k) -> None:
+    """Nuoliehdokkaiden kokosuhteet ja korrelaatiot ilman tekstiä: tunnistetut vs. jäljelle jääneet '>'."""
+    import numpy as np
+    paa = k.lue_tila()["lukijat"][0]
+    data = []
+    for p in sorted(k.sivut.glob("s*.json")):
+        n = int(p.stem[1:])
+        data.append((geometria.harmaa(Image.open(k.naamio / f"s{n:03d}.png")),
+                     lukijat.sanat(k.lukijat / lukijat.kansio(paa) / f"s{n:03d}.tsv")))
+    nu = merkit.Nuoli()
+    nu.opi(data)
+    if nu.malli is None:
+        print("Nuolen mallikuvaa ei saatu.")
+        return
+    tulos = {"tunnistettu": [], "jäi > ": []}
+    for g, sanat in data:
+        rk = merkit.rivikorkeudet(sanat)
+        for i, s in enumerate(sanat):
+            if s.teksti[:1] not in merkit.SEKAANNUKSET | {"("}:
+                continue
+            tunn = nu.tunnista(g, s, rk[i])
+            avain = "tunnistettu" if tunn is not None else ("jäi > " if s.teksti == ">" else None)
+            if avain is None:
+                continue
+            kuv = merkit._kuviot(g, (s.x0, s.y0, s.x1, s.y1))[:2]
+            parhaat = []
+            for x0, y0, x1, y1, m in kuv:
+                a = merkit._normaali(m)
+                r = float((a * nu.malli).sum() / (np.linalg.norm(a) * np.linalg.norm(nu.malli) + 1e-9))
+                parhaat.append((round((x1 - x0) / rk[i] / nu.mittasuhde[0], 2), round((y1 - y0) / rk[i] / nu.mittasuhde[1], 2), round(r, 2)))
+            tulos[avain].append((len(kuv), parhaat))
+    print(f"Mallin koko suhteessa riviin: leveys {nu.mittasuhde[0]:.2f}, korkeus {nu.mittasuhde[1]:.2f}; raja {merkit.RAJA}")
+    for avain, rivit in tulos.items():
+        print(f"{avain}: {len(rivit)} (kuvioita, [(leveys/malli, korkeus/malli, korrelaatio)])")
+        for kuvioita, parhaat in rivit[:40]:
+            print("   ", kuvioita, parhaat)
 
 
 def siivoa(args, aset: dict) -> int:
@@ -219,6 +269,7 @@ def main() -> int:
     c.add_argument("--sivumerkki", choices=["kommentti", "nakyva"], default="kommentti")
     tl = sub.add_parser("tilasto", help="yhteenveto ilman kirjan tekstiä")
     tl.add_argument("kirja")
+    tl.add_argument("--nuolet", action="store_true", help="nuoliehdokkaiden mittaukset (numeroina)")
     s = sub.add_parser("siivoa", help="poista välivaiheet")
     s.add_argument("kirja")
     args = ap.parse_args()
