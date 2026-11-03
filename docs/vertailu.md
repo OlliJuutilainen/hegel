@@ -41,6 +41,15 @@ Havainnot:
 - **Uskottavia vääriä sanoja ei tullut yhtään.** Kaikki virheet olivat ei-sanoja tai välimerkkejä, joten sanakirja
   liputtaisi ne.
 - 2× suurennus auttaa vähän (CER 0,55 → 0,52 %).
+- tessdata_bestin latinan merkistössä on á, é, í ja ó, mutta ei makroneita (`combine_tessdata -u`).
+  Kun deu+lat-ajosta kiellettiin aksentit (`tessedit_char_blacklist=áéíóúÁÉÍÓÚàèìòù`), umlautit korjaantuivat, mutta
+  CER oli silti 1,03 %. Latinan malli rikkoo edelleen lainausmerkit ja lukee *weil* → *well* ja *Subalterne* →
+  *Subalteme*.
+- Saksan sanakirja (hunspell de_DE) ei tunne deu-lukeman 583 sanasta 59:ää. Niistä vain noin 8 on lukuvirheitä.
+  Loput ovat oikeita sanoja: Kantin vanha oikeinkirjoitus (*theils*, *muß*, *Princip*, *urtheilen*, *blos*),
+  termit (*Vernunfteinheit*, *KrV*) ja latina (*Conceptus*, *ratiocinans/ratiocinatus*). Pelkkä sanakirja liputtaa
+  siis liikaa. Avuksi tarvitaan kirjan oma sanasto (sanat, jotka toistuvat korkealla luotettavuudella), vanhan
+  oikeinkirjoituksen säännöt ja Tesseractin luotettavuus.
 
 ### Kursiivi
 
