@@ -110,3 +110,15 @@ CER on tässä alaraja: virhe, jonka sekä Tesseract että Claude ohittivat, ei 
   (algoritminen sovitus), ja sen paikalle kirjoitetaan →. Sama tehdään §:lle.
 - Muut deu-virheet ovat samaa tyyppiä kuin sivulla 2506: piste luettiin pilkuksi (5), *Ratlonalität* ja
   *affıcirt* (fi-ligatuuri), lisäksi välilyöntejä katosi (*A326*, *302/B*).
+
+## Nuolentunnistus (3.11.2026)
+
+`linjasto/merkit.py`: mallikuva tehdään kirjan omista selvistä tapauksista, joissa sana on pelkkä `>`. Epäilyttävän
+sanan (alkaa merkillä `> & + - — – 2` tai `(`) ensimmäistä tai toista mustekuviota verrataan malliin
+korrelaatiolla, ja koko mitataan suhteessa rivin korkeuteen. Seuraavaan kirjaimeen kiinni olevasta kuviosta verrataan
+vain nuolen levyistä alkua.
+
+Kahdella testisivulla (puolikokoiset chattikuvat) nuolia on 10. Niistä tunnistettiin 6, eikä yhtään väärää
+korvausta tullut. Koottu md poikkesi kullasta CER 0,52 % → 0,42 %. Nuolten korrelaatio oli 0,47–0,91 ja muiden
+kokoehdon läpäisseiden kuvioiden enintään 0,34. Raja on 0,45, eli väli on kapea. Täysikokoisilla sivuilla väli
+tarkistetaan muutoslokin tilasta `nuoli_tunnistettu`.

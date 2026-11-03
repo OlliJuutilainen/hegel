@@ -21,6 +21,7 @@ from PIL import Image
 from rapidfuzz.distance import Levenshtein
 
 from .lukijat import Sana
+from .merkit import korvaa, rivikorkeudet
 
 REUNA = ".,;:!?()[]{}„“”\"'‚‘’»«–—/…*"
 OUTO = re.compile(r"[<>+&|\\{}©®°~^¢£¥ı]|^[A-ZÄÖÜ]\d{2,}|\d[A-Za-zÄÖÜäöüß]{2,}|[A-Za-zÄÖÜäöüß]\d")
@@ -94,12 +95,13 @@ def kirjan_sanasto(sivut_sanat: list[list[Sana]], a: dict) -> set[str]:
 
 
 def arvioi_sivu(sivu: int, paa: list[Sana], muut: dict[str, list[Sana]], paa_merkisto: set[str],
-                sanakirjat: Sanakirjat, sanasto: set[str], a: dict) -> dict:
+                sanakirjat: Sanakirjat, sanasto: set[str], a: dict, nuoli=None, kuva=None) -> dict:
     """Sivun sanat päätöksineen ja lippuineen."""
     paa_t = [s.teksti for s in paa]
     kohdistus = {m: (kohdista(paa_t, [s.teksti for s in ss]), ss) for m, ss in muut.items()}
     rivijako = rivit(paa)
     tavu = tavutetut(paa, rivijako)
+    rk = rivikorkeudet(paa) if nuoli is not None else {}
     tulos_rivit = []
     for rnro, idx in enumerate(rivijako, 1):
         r_sanat = []
@@ -107,6 +109,16 @@ def arvioi_sivu(sivu: int, paa: list[Sana], muut: dict[str, list[Sana]], paa_mer
             s = paa[i]
             lukemat, liput = {"pää": s.teksti}, []
             valittu, peruste = s.teksti, ""
+            kuvio = nuoli.tunnista(kuva, s, rk[i]) if nuoli is not None and kuva is not None else None
+            uusi = korvaa(s.teksti, kuvio) if kuvio is not None else None
+            if uusi is not None:
+                # Nuoli tunnistettu kuvasta: lukijoiden erimielisyys ja outo merkki koskivat nuolta itseään.
+                for m, (k, ss) in kohdistus.items():
+                    lukemat[m] = ss[k[i]].teksti if i in k else None
+                r_sanat.append({"id": f"s{sivu:03d}-r{rnro:02d}-w{snro:02d}", "teksti": uusi, "lukemat": lukemat,
+                                "conf": round(s.conf, 1), "bbox": [s.x0, s.y0, s.x1, s.y1], "liput": [],
+                                "peruste": "nuoli → tunnistettu kuvasta (kirjan oma mallikuva)"})
+                continue
             paa_sana = tavu.get(i, ydin(s.teksti))
             paa_tunnettu = bool(re.search(r"[^\W\d_]", paa_sana)) and (
                 paa_sana in sanasto or (sanakirjat.kirjat and sanakirjat.tuntee(paa_sana)))

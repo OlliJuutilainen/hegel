@@ -29,7 +29,7 @@ from pathlib import Path
 from linjasto import asetukset as A
 from PIL import Image
 
-from linjasto import geometria, kokoa, liputus, lukijat, vastaanotto
+from linjasto import geometria, kokoa, liputus, lukijat, merkit, vastaanotto
 
 
 def valmistele(args, aset: dict) -> int:
@@ -98,10 +98,20 @@ def valmistele(args, aset: dict) -> int:
     sanasto = liputus.kirjan_sanasto(list(paa_sanat.values()), aset["liputus"])
     paa_merkisto = lukijat.merkisto(tessdata, paa)
     k.sivut.mkdir(exist_ok=True)
+    nuoli, kuva = None, (lambda n: geometria.harmaa(Image.open(k.naamio / f"s{n:03d}.png")))
+    if profiili.get("nuoli"):
+        nuoli = merkit.Nuoli()
+        nuoli.opi([(kuva(s["n"]), paa_sanat[s["n"]]) for s in sivut])
+        if nuoli.malli is None:
+            print(f"  Huom: nuolen mallikuvaan löytyi vain {nuoli.n} selvää tapausta (tarvitaan 3); nuolia ei tunnisteta")
+            nuoli = None
+        else:
+            print(f"  Nuolen mallikuva {nuoli.n} tapauksesta")
     arvioidut = []
     for s in sivut:
         arvio = liputus.arvioi_sivu(s["n"], paa_sanat[s["n"]], {m: lue(m, s["n"]) for m in muut},
-                                    paa_merkisto, sanakirjat, sanasto, aset["liputus"])
+                                    paa_merkisto, sanakirjat, sanasto, aset["liputus"],
+                                    nuoli=nuoli, kuva=kuva(s["n"]) if nuoli else None)
         arvio["tiedosto"] = s["tiedosto"]
         arvio["lohko"] = lohkot.get(s["n"])
         (k.sivut / f"s{s['n']:03d}.json").write_text(json.dumps(arvio, ensure_ascii=False), encoding="utf-8")
@@ -112,9 +122,10 @@ def valmistele(args, aset: dict) -> int:
     if n_sanat == 0:
         raise SystemExit("Lukijat eivät tuottaneet yhtään sanaa. Tarkista kansio lukijat/ ja tesseractin virheet.")
     n_lip = sum(1 for a in arvioidut for r in a["rivit"] for w in r["sanat"] if w["liput"])
-    n_toinen = sum(1 for a in arvioidut for r in a["rivit"] for w in r["sanat"] if w["peruste"])
+    n_nuoli = sum(1 for a in arvioidut for r in a["rivit"] for w in r["sanat"] if w["peruste"].startswith("nuoli"))
+    n_toinen = sum(1 for a in arvioidut for r in a["rivit"] for w in r["sanat"] if w["peruste"]) - n_nuoli
     print(f"Asema 4: {n_sanat} sanaa, liputettu {n_lip} ({n_lip / max(n_sanat, 1):.1%}), toisen lukijan lukema "
-          f"{n_toinen}; tarkistuspaketissa {n_kohteet} kohdetta ({k.paketti / 'kohteet.json'})")
+          f"{n_toinen}, nuolia kuvasta {n_nuoli}; tarkistuspaketissa {n_kohteet} kohdetta ({k.paketti / 'kohteet.json'})")
     k.kirjoita_tila({"kielet": profiilin_nimi, "lukijat": profiili["lukijat"], "valmisteltu": date.today().isoformat()})
     return 0
 
@@ -173,11 +184,13 @@ def tilasto(args, aset: dict) -> int:
                 syyt.update(w["liput"])
                 if w["liput"] and len(w["teksti"]) <= 2:
                     lyhyet[w["teksti"]] += 1
-                if w["peruste"]:
+                if w["peruste"].startswith("nuoli"):
+                    merkit2["→ (kuvasta)"] += 1
+                elif w["peruste"]:
                     merkit2[w["peruste"].split("merkki ")[1].split(" ")[0]] += 1
     print(f"Sivuja {len(sivut)}. Liputussyyt (sana voi saada monta):", dict(syyt.most_common()))
     print("Yleisimmät liputetut 1–2 merkin sanat:", lyhyet.most_common(12))
-    print("Toisen lukijan lukemat merkin mukaan:", dict(merkit2))
+    print("Korjatut merkit (toinen lukija tai kuva):", dict(merkit2))
     return 0
 
 

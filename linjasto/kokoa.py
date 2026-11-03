@@ -161,7 +161,8 @@ def kokoa(sivut: list[dict], tiedostot: dict[int, str], sanakirjat, a: dict, tas
         for w in (w for r in s["rivit"] for w in r["sanat"]):
             if w["peruste"]:
                 loki.append({"sivu": s["sivu"], "id": w["id"], "lukemat": " | ".join(f"{k}: {v}" for k, v in w["lukemat"].items()),
-                             "valittu": w["teksti"], "tila": "toinen_lukija", "peruste": w["peruste"]})
+                             "valittu": w["teksti"], "tila": "nuoli_tunnistettu" if w["peruste"].startswith("nuoli") else "toinen_lukija",
+                             "peruste": w["peruste"]})
             if w["liput"]:
                 loki.append({"sivu": s["sivu"], "id": w["id"], "lukemat": " | ".join(f"{k}: {v}" for k, v in w["lukemat"].items()),
                              "valittu": w["teksti"] + ("[?]" if taso == 1 else ""), "tila": "liputettu",
