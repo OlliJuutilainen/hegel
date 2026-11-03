@@ -36,6 +36,11 @@ vähintään yhtä monta pikseliä, ja sivun leveydelle jää enemmän tilaa. Ly
 Haittana ovat isommat tiedostot. Viedyn JPG:n todellinen koko tarkistetaan ensimmäisestä viennistä
 (`sips -g pixelWidth -g pixelHeight sivu.jpg`).
 
+Ensimmäinen vienti (Vernunft, 33 sivua, vanhat asetukset 8M 16:9 ja Magic Pro): JPG 2152 × 3408 px, tiedostonimet
+`Vernunft (Kant Lexikon)_1.jpg` … `_33.jpg` (järjestettävä luonnollisesti: `_2` ennen `_10`). Chattiin lähetetty
+sivu oli tästä noin puoleen pienennetty (1135 px leveä). Täysikokoisena tarkkuus on noin 400 dpi, kun pienennetyn
+sivun arvio oli 214 dpi.
+
 ## Avoimet kokeet (Nordilla)
 
 1. **Tallenna galleriaan** ja tiedoston siirto Macille: kuvan koko pikseleinä ja JPEG-laatu.
