@@ -43,16 +43,30 @@ def lue(kuva: Path, malli: str, kohde: Path, tessdata: Path, psm: int) -> None:
     env = dict(os.environ, OMP_THREAD_LIMIT="1")
     tulos = subprocess.run(
         ["tesseract", str(kuva), "stdout", "--tessdata-dir", str(tessdata), "-l", malli,
-         "--psm", str(psm), "-c", "preserve_interword_spaces=1", "tsv"],
+         "--psm", str(psm), "-c", "preserve_interword_spaces=1",
+         # TSV pyydetään asetuksilla eikä config-tiedostolla 'tsv': tessdata_best-kansiossa ei ole configs/-kansiota,
+         # ja silloin Tesseract kirjoittaa varoituksen jälkeen tavallista tekstiä (Ollin Mac 3.11.2026).
+         "-c", "tessedit_create_tsv=1", "-c", "tessedit_create_txt=0"],
         capture_output=True, env=env)
-    if tulos.returncode != 0:
-        raise RuntimeError(f"tesseract {malli} {kuva.name}: {tulos.stderr.decode(errors='replace')[-400:]}")
+    if tulos.returncode != 0 or not on_tsv(tulos.stdout):
+        raise RuntimeError(f"tesseract {malli} {kuva.name}: ei TSV-tulostetta. "
+                           f"{tulos.stderr.decode(errors='replace')[-400:]}")
     kohde.write_bytes(tulos.stdout)
+
+
+def on_tsv(data: bytes) -> bool:
+    return data.startswith(b"level\t")
 
 
 def lue_kaikki(tehtavat: list[tuple], tessdata: Path, psm: int, rinnakkain: int, uudelleen: bool) -> list[str]:
     """tehtavat: [(kuva, malli, kohde)]. Palauttaa virheet. Valmiit lukemat ohitetaan, ellei uudelleen."""
-    tehtavat = [t for t in tehtavat if uudelleen or not t[2].exists() or t[2].stat().st_mtime < t[0].stat().st_mtime]
+    def valmis(t) -> bool:
+        if uudelleen or not t[2].exists() or t[2].stat().st_mtime < t[0].stat().st_mtime:
+            return False
+        with open(t[2], "rb") as f:
+            return on_tsv(f.read(8))  # vanha virheellinen lukema (tavallista tekstiä) luetaan uudelleen
+
+    tehtavat = [t for t in tehtavat if not valmis(t)]
     virheet = []
 
     def yksi(t):

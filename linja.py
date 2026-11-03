@@ -108,6 +108,8 @@ def valmistele(args, aset: dict) -> int:
     n_kohteet = liputus.paketti(arvioidut, {s["n"]: k.alkup / s["tiedosto"] for s in sivut}, k.paketti,
                                 profiili["kielet"])
     n_sanat = sum(len(r["sanat"]) for a in arvioidut for r in a["rivit"])
+    if n_sanat == 0:
+        raise SystemExit("Lukijat eivät tuottaneet yhtään sanaa. Tarkista kansio lukijat/ ja tesseractin virheet.")
     n_lip = sum(1 for a in arvioidut for r in a["rivit"] for w in r["sanat"] if w["liput"])
     n_toinen = sum(1 for a in arvioidut for r in a["rivit"] for w in r["sanat"] if w["peruste"])
     print(f"Asema 4: {n_sanat} sanaa, liputettu {n_lip} ({n_lip / max(n_sanat, 1):.1%}), toisen lukijan lukema "
