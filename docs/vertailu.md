@@ -88,3 +88,25 @@ vinoviivaa lasketa kursiiviksi. Tarkistetaan täyden resoluution skanneilla.
   (10,3", Carta 1200; the-ebook-reader.com ja notebookcheck.net). Laitteen oma `wm size` on vielä tarkistamatta.
   Sovituskerroin on 1,095, ja sivun vierelle jää yhteensä 161 px. Riviväli on 34 px eli 3,8 mm.
 - Sivu on kaksipalstainen, joten pahvin luvun 12.2 b) mukaan täyttöpalkkeja ei lisätä.
+
+## Esikoe 2: Kant-Lexikon s. 2486 (artikkelin ensimmäinen sivu)
+
+Aineisto: chattiin lähetetty kuva (1263 × 2000 px, pienennetty Macin 2152 × 3408 px:n tiedostosta). Kultalitterointi
+on tehty eri tavalla kuin sivulla 2506: pohjana on deu-lukema, johon Claude korjasi kuvasta 17 kohtaa. Siksi deu:n
+CER on tässä alaraja: virhe, jonka sekä Tesseract että Claude ohittivat, ei näy. Olli tarkistaa litteroinnin.
+
+| Lukija | CER | CER (kirj.) | WER | Uskottavat väärät sanat |
+|---|---|---|---|---|
+| deu | 0,47 % | 0,20 % | 3,52 % | 0 (mittari laski yhden, ks. alla) |
+| script/Latin | 0,47 % | 0,22 % | 4,00 % | 1: *Erkenntniß* → *Erkenntnis* |
+
+- Mittarin osuma deu:lle on mittausvirhe: nuoli puuttui (`-Spontaneität`), ja vertailu luki loput sanasta oikeaksi
+  sanaksi.
+- **script/Latin muutti kerran vanhan kirjoitusasun nykyiseksi** (*Erkenntniß* → *Erkenntnis*). Se on juuri sitä
+  uskottavaa arvailua, jota diplomaattinen litterointi ei salli, ja syy pitää deu ensisijaisena lukijana.
+- **Nuolta → ei ole kummankaan mallin merkistössä**, eikä §:ää ole deu:n merkistössä. Nuolet luetaan merkeiksi `>`,
+  `+` ja `-`, ja § luetaan 8:ksi (*§ 3* → *8 3*). Sivulla on 7 nuolta ja 2 §-merkkiä. Tesseract ei voi oppia näitä
+  ilman uudelleenkoulutusta. Ehdotus: koska kirjan nuoli on aina samannäköinen, se etsitään kuvasta mallikuvalla
+  (algoritminen sovitus), ja sen paikalle kirjoitetaan →. Sama tehdään §:lle.
+- Muut deu-virheet ovat samaa tyyppiä kuin sivulla 2506: piste luettiin pilkuksi (5), *Ratlonalität* ja
+  *affıcirt* (fi-ligatuuri), lisäksi välilyöntejä katosi (*A326*, *302/B*).
