@@ -41,23 +41,55 @@ def _numero(r: dict) -> int | None:
     return int(nums[0]) if len(nums) == 1 else None
 
 
+def _reunavyo(s: dict, yla: bool) -> list[dict]:
+    """Sivun ylin (tai alin) rivivyö kuvan paikan mukaan, ei Tesseractin lukujärjestyksen: parittoman sivun
+    oikealle tasattu juokseva otsikko luetaan usein vasta vasemman palstan jälkeen (Kant-Lexikon, 3.11.2026)."""
+    rivit = s["rivit"]
+    if not rivit:
+        return []
+    kork = statistics.median([r["korkeus"] for r in rivit])
+    if yla:
+        raja = min(r["bbox"][1] for r in rivit) + 0.8 * kork
+        return [r for r in rivit if r["bbox"][1] <= raja]
+    raja = max(r["bbox"][3] for r in rivit) - 0.8 * kork
+    return [r for r in rivit if r["bbox"][3] >= raja]
+
+
 def juoksevat(sivut: list[dict], osuus: float) -> tuple[dict[int, set], dict[int, int | None]]:
-    """Poistettavat rivit sivuittain (rivi-id:t) ja luetut sivunumerot."""
+    """Poistettavat rivit sivuittain (rivi-id:t) ja luetut sivunumerot.
+
+    Sivunumeroksi kelpaa ylimmän tai alimman rivivyön numero (1–4 numeroa) vain, jos se sopii sivujen
+    järjestykseen: numero − sivun järjestysnumero on sama kuin useimmilla sivuilla. Silloin koko vyö on
+    juoksevaa otsikkoa, vaikka sen teksti vaihtuisi sivulta toiselle (lexikonin alahakusana). Lisäksi
+    reunavyö poistetaan, jos sen teksti (kirjaimet ilman numeroita) toistuu vähintään osuuden sivuista.
+    Alle kolmen sivun erässä numeroa ei voi verrata järjestykseen, joten silloin riittää lyhyt reunarivi,
+    joka alkaa tai loppuu numeroon.
+    """
     poista = {s["sivu"]: set() for s in sivut}
     numerot = {s["sivu"]: None for s in sivut}
-    for paikka in (0, -1):
-        ehdokkaat = [(s, s["rivit"][paikka]) for s in sivut if s["rivit"]]
-        laskuri = Counter(_avain(r) for _, r in ehdokkaat)
-        for s, r in ehdokkaat:
-            k = _avain(r)
-            toistuu = len(sivut) >= 3 and k and laskuri[k] / len(sivut) >= osuus
-            pelkka_numero = len(r["sanat"]) == 1 and NUMERO.match(r["sanat"][0]["teksti"])
-            lyhyt_numerolla = (len(sivut) < 3 and len(r["sanat"]) <= 6
-                               and (NUMERO.match(r["sanat"][0]["teksti"]) or NUMERO.match(r["sanat"][-1]["teksti"])))
-            if toistuu or pelkka_numero or lyhyt_numerolla:
-                poista[s["sivu"]].add(r["id"])
-                if numerot[s["sivu"]] is None:
-                    numerot[s["sivu"]] = _numero(r)
+    ehdokas = {}
+    for i, s in enumerate(sivut):
+        for yla in (True, False):
+            vyo = _reunavyo(s, yla)
+            luvut = [int(w["teksti"]) for r in vyo for w in r["sanat"] if NUMERO.match(w["teksti"])]
+            if len(luvut) == 1 and sum(len(r["sanat"]) for r in vyo) <= 10:
+                ehdokas.setdefault(s["sivu"], (luvut[0], vyo, i))
+    erot = Counter(n - i for n, _, i in ehdokas.values())
+    ero = erot.most_common(1)[0][0] if erot and (len(sivut) >= 3 and erot.most_common(1)[0][1] >= 2) else None
+    for sivu, (n, vyo, i) in ehdokas.items():
+        pieni_era = len(sivut) < 3 and all(len(r["sanat"]) <= 6 for r in vyo)
+        if (ero is not None and n - i == ero) or pieni_era:
+            numerot[sivu] = n
+            poista[sivu].update(r["id"] for r in vyo)
+    if len(sivut) >= 3:
+        for yla in (True, False):
+            vyot = [(s, _reunavyo(s, yla)) for s in sivut]
+            laskuri = Counter(_avain(r) for _, v in vyot for r in v)
+            for s, v in vyot:
+                for r in v:
+                    k = _avain(r)
+                    if k and laskuri[k] / len(sivut) >= osuus:
+                        poista[s["sivu"]].add(r["id"])
     return poista, numerot
 
 

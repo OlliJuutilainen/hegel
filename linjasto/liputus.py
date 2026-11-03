@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import json
 import re
+import unicodedata
 from collections import Counter
 from pathlib import Path
 
@@ -27,6 +28,11 @@ OUTO = re.compile(r"[<>+&|\\{}©®°~^¢£¥ı]|^[A-ZÄÖÜ]\d{2,}|\d[A-Za-zÄÖ
 
 def ydin(teksti: str) -> str:
     return teksti.strip(REUNA + "-")
+
+
+def _perus(teksti: str) -> str:
+    """Kirjaimet ilman diakriitteja ja umlauteja: 'Karásek' ja 'Karäsek' -> 'Karasek'."""
+    return "".join(c for c in unicodedata.normalize("NFD", teksti) if not unicodedata.combining(c))
 
 
 def kohdista(a: list[str], b: list[str]) -> dict[int, int]:
@@ -101,13 +107,25 @@ def arvioi_sivu(sivu: int, paa: list[Sana], muut: dict[str, list[Sana]], paa_mer
             s = paa[i]
             lukemat, liput = {"pää": s.teksti}, []
             valittu, peruste = s.teksti, ""
+            paa_sana = tavu.get(i, ydin(s.teksti))
+            paa_tunnettu = bool(re.search(r"[^\W\d_]", paa_sana)) and (
+                paa_sana in sanasto or (sanakirjat.kirjat and sanakirjat.tuntee(paa_sana)))
             for m, (k, ss) in kohdistus.items():
                 toinen = ss[k[i]] if i in k else None
                 lukemat[m] = toinen.teksti if toinen else None
                 if toinen is None or toinen.teksti == s.teksti:
                     continue
+                # Ero vain välilyönnissä: 'B 383' / 'B383' ei ole erimielisyys.
+                naapurit = paa_t[max(0, i - 1):i + 2]
+                if toinen.teksti in ("".join(naapurit[:2]), "".join(naapurit[-2:])) and len(naapurit) > 1:
+                    continue
                 uudet = set(toinen.teksti) - paa_merkisto
-                if uudet and toinen.conf >= a["toisen_lukijan_luottamus"]:
+                vain_aksentit = _perus(toinen.teksti) == _perus(s.teksti)
+                if paa_tunnettu and vain_aksentit:
+                    # Pääkielen lukema on tunnettu sana ja toinen lukija lisäsi vain aksentin ('ist' / 'íst'):
+                    # toisen lukijan kohinaa, ei erimielisyyttä (Kant-Lexikon, 3.11.2026).
+                    continue
+                if uudet and not paa_tunnettu and toinen.conf >= a["toisen_lukijan_luottamus"]:
                     valittu, peruste = toinen.teksti, f"{m}: merkki {''.join(sorted(uudet))} puuttuu pääkielen mallista"
                 else:
                     liput.append("lukijat_eri_mieltä")
