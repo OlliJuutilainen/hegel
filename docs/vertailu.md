@@ -84,6 +84,7 @@ vinoviivaa lasketa kursiiviksi. Tarkistetaan täyden resoluution skanneilla.
 - Rajaus vei ylhäältä 105 px ja alhaalta 186 px. Oikean reunan merkinnät ja vasemman alakulman jälki jäivät
   rajauksen ulkopuolelle (debug-kuva tarkistettu).
 - Rajatun sivun koko on 1135 × 1709 ja kuvasuhde 0,664 (3:4 = 0,750).
-- Laskettu näytölle 1404 × 1872 ja tiheydelle 227 ppi. Molemmat ovat oletuksia, ja koko tarkistetaan adb:llä.
+- Laskettu näytölle 1404 × 1872 ja tiheydelle 227 ppi. Arvot ovat Note Air3:n (ei C-mallin) julkaistut tiedot
+  (10,3", Carta 1200; the-ebook-reader.com ja notebookcheck.net). Laitteen oma `wm size` on vielä tarkistamatta.
   Sovituskerroin on 1,095, ja sivun vierelle jää yhteensä 161 px. Riviväli on 34 px eli 3,8 mm.
 - Sivu on kaksipalstainen, joten pahvin luvun 12.2 b) mukaan täyttöpalkkeja ei lisätä.
