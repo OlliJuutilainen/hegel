@@ -1,6 +1,11 @@
 # CamScanner (asema 0)
 
 Laite OnePlus Nord, CamScanner Pro. Tämä tiedosto kirjaa, mitä CamScanner antaa ulos ja millä asetuksilla.
+
+**Käyttäjän päätös 3.11.2026: CamScannerin omaa OCR:ää ei käytetä.** CamScanner on vain kuvalähde (JPG-sivut).
+camscanner-lukija (pahvi 3.1 ja 4.2) jää pois, eikä OCR:n paikallisuutta tarvitse selvittää. Lukijoina ovat Tesseract
+`deu` ja `script/Latin` (`docs/vertailu.md`), tasolla 3 myös Claude.
+
 Suositusasetukset `md`- ja `pdf-luku`-profiileille kirjataan, kun vertailu (vaihe 1) on tehty.
 
 ## Asiakirjan Lisää-valikko (Ollin kuvakaappaus 3.11.2026)
@@ -25,10 +30,5 @@ Linjaston kannalta:
 
 ## Avoimet kokeet (Nordilla)
 
-1. **Tekstiksi lentotilassa**: avaa Kant-Lexikonin sivu 2506 ja valitse Tekstiksi lentotila päällä. Jos tunnistus
-   ei toimi, OCR tehdään pilvessä.
-2. **Tekstiksi-tulos sivulta 2506**: liitä teksti chattiin. Sille lasketaan CER sivun kultalitterointia vasten,
-   jolloin camscanner-lukijaa voi verrata Tesseractiin (`docs/vertailu.md`).
-3. **Jaa → PDF** Dropboxiin tai Macille: tarkistan PyMuPDF:llä, onko PDF:ssä tekstikerros ja sanakoordinaatit.
-4. **Tallenna galleriaan** ja tiedoston siirto Macille: kuvan koko pikseleinä.
-5. Onko CamScannerin asetuksissa automaattinen lataus Dropboxiin?
+1. **Tallenna galleriaan** ja tiedoston siirto Macille: kuvan koko pikseleinä ja JPEG-laatu.
+2. Original- ja Magic Pro -suodattimen vertailu samoilla sivuilla (vaihe 1).

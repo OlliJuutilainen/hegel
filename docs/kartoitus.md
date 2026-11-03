@@ -72,7 +72,16 @@ Tarkistettu HEAD-pyynnöillä (`raw.githubusercontent.com/tesseract-ocr/tessdata
 eng, fin, deu, lat, grc, ell, ita, fra, dan, lit, swe, deu_latf (12,9 Mt) ja script/Fraktur.
 **frk puuttuu tessdata_bestista (404)**, joten fraktuuraan käytetään deu_latf:ia tai script/Frakturia.
 
-### 2.3 Macilla tarkistamatta (Olli ajaa)
+### 2.3 Mac (Ollin ajo 3.11.2026)
+
+- `~/hegel/venv` **ei ole olemassa**, toisin kuin pahvi olettaa. Python-versio jäi siksi selvittämättä.
+- tesseract 5.4.1 (leptonica 1.87) on asennettu **MacPortsista**. Sen tessdata-kansio on `/opt/local/share/tessdata/`,
+  ja kieliä on vain kaksi: eng ja fin. tessdata_bestin mallit ladataan omaan kansioonsa
+  (`local/tessdata/`, käytetään `--tessdata-dir`- tai `TESSDATA_PREFIX`-asetuksella), joten järjestelmään ei tarvitse
+  koskea.
+- Löytyvät: `/usr/local/bin/brew`, `/opt/local/bin/port` ja `/usr/local/bin/adb`.
+
+Alkuperäinen tarkistuslista:
 
 ```
 cd ~/hegel && source venv/bin/activate
