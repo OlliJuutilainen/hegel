@@ -6,3 +6,6 @@ pytesseract>=0.3.13
 tqdm>=4.66
 pdfminer.six>=20231228
 numpy>=1.21
+scipy>=1.11
+rapidfuzz>=3.0
+spylls>=0.1.7

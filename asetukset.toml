@@ -1,0 +1,31 @@
+# Linjaston asetukset (docs/linjasto.md). Polut ovat suhteessa repon juureen.
+
+[polut]
+tessdata = "local/tessdata"          # tessdata_best-mallit (docs/kartoitus.md)
+work = "local/work"
+out = "local/out"
+
+[ajo]
+rinnakkain = 4                       # yhtä aikaa ajettavat tesseract-prosessit (Mac: 4 fyysistä ydintä)
+psm = 3                              # Tesseractin sivun rakenteen tunnistus: 3 = automaattinen
+oletus_kielet = "kant-lexikon"       # kieliprofiilit.toml
+
+[geometria]
+pad = 0.01                           # tekstilohkon ympärille jätettävä reunus sivun korkeudesta
+min_alue = 0.0005                    # tätä pienemmät alueet ovat pölyä (sivun pinta-alasta)
+reuna_max_korkeus = 0.02             # reunaa koskettavat matalat alueet ovat skannerin reunaa
+min_lohko = 0.40                     # pienempi tekstilohko on epäonnistunut tunnistus
+laajennus = 0.02                     # vaakalaajennus sivun leveydestä: yhdistää rivin kirjaimet
+
+[liputus]
+luottamus_raja = 70                  # tätä pienempi Tesseractin sanaluotettavuus liputetaan
+sanakirja_luottamus = 90             # sanakirjasta puuttuva sana liputetaan, jos luotettavuus on tätä pienempi
+kirjan_sanasto_min = 3               # näin monta varmaa esiintymää tekee sanasta kirjan oman sanan
+kirjan_sanasto_luottamus = 90
+toisen_lukijan_luottamus = 70        # toisen lukijan lukema valitaan, jos sen merkki puuttuu pääkielen mallista
+rivi_osuus = 0.5                     # rivi liputetaan, jos näin suuri osa sen sanoista on liputettu (väh. 3 sanaa)
+
+[kokoa]
+juokseva_osuus = 0.30                # juoksevan otsikon pitää toistua näin monella sivulla
+otsikko_kerroin = 1.6
+lyhyt_rivi = 0.8                     # palstan leveyttä tätä osuutta lyhyempi rivi päättää kappaleen                # rivi on otsikko, jos sen sanat ovat näin paljon tavallista korkeampia

@@ -159,3 +159,25 @@ Tulos kirjataan `docs/vertailu.md`:hen.
    Voikko. Tämä tarkistetaan vielä isommalla sanajoukolla vaiheessa 2.
 6. **Kursiivi**: tavoitellaan. Testisivulla kursiivisanat erottuvat kallistumasta selvästi, mutta nykyiset
    kynnykset eivät sovi tähän kirjaan (`docs/vertailu.md`).
+
+## 6. Vaihe 2: toteutus ja poikkeamat pahvista (3.11.2026)
+
+`linja.py valmistele` tekee asemat 1–4 ja `linja.py kokoa` aseman 6 (taso 1, ei tekoälyä). Pilvessä kahdella
+testisivulla mitattu: 1 245 sanaa, liputettu 64 (5,1 %), toisen lukijan lukema 4 (§ kahdesti, *Jindřich*,
+*Karásek*). Koottu markdown poikkeaa kultalitteroinnista (tavutus purettuna) CER 0,52 %, eli samaa luokkaa kuin
+raaka OCR: kokoaminen ei hukkaa tekstiä.
+
+Poikkeamat ja täsmennykset:
+- **Lukijat** ovat kaksi Tesseract-mallia (`deu` ja `script/Latin`), eivät camscanner ja tesseract. Toisen
+  lukijan lukema valitaan vain, jos siinä on merkki, jota pääkielen mallin merkistössä ei ole. Merkistö luetaan
+  `.traineddata`-tiedostosta (`lukijat.merkisto`; tarkistettu: sama kuin `combine_tessdata -u`).
+- **Tavutus**: pahvin mukaan epäselvät tapaukset säilytetään. Tässä ne yhdistetään ja kirjataan lokiin
+  (`tavutus_purettu_epävarma`), koska saksassa pienellä alkava jatko on lähes aina tavutusta. Esimerkkejä:
+  *Vernunfterkennt- niß*, jota sanakirja ei tunne vanhan oikeinkirjoituksen takia.
+- **Kappaleet**: Tesseractin kappaleiden lisäksi kappale päättyy palstan leveyttä selvästi lyhyempään riviin
+  (otsikot, allekirjoitukset), ja oikealle siirtynyt rivi aloittaa oman kappaleen.
+- **Nimet**: toisen lukijan valitsema nimi saa silti `[?]`:n, jos sitä ei ole sanakirjassa. Tämä on varovaista
+  ja voidaan muuttaa.
+- **Sanakirja**: hunspell de_DE_frami (LibreOffice) spyllsillä, kansiossa `local/sanakirjat/`.
+- **Ei vielä**: nuoli → ja piste–pilkku-korjaus kuvasta (9 + 9 jäljellä olevista 32 korvausvirheestä
+  testisivuilla), kursiivi, alaviitteet `[^s12-1]`, ihmistarkistussivu ja Original-parit.

@@ -6,7 +6,7 @@ Vastaa suomeksi, tiiviisti. Älä väitä toimivaksi mitään, mitä et ole ajan
 markdown ja/tai Note Air3:lle sovitettu PDF. Tekstin tuottaa algoritmi. Tekoäly tarkastaa vain liputetut kohdat
 rajauskuvista, ja jokainen muutos kirjataan lokiin. CamScannerin OCR:ää ei käytetä (päätös 3.11.).
 **Vaiheet** (luku 14): 0 kartoitus ja Ollin vastaukset (`docs/kartoitus.md`) · 1 vertailu: esikoe yhdellä sivulla
-(`docs/vertailu.md`), odottaa oikeita skanneja · 2 asemat 1–4 ja md · 3 tarkistustaito · 4 pdf-luku · 5 taso 3.
+(`docs/vertailu.md`), odottaa oikeita skanneja · 2 asemat 1–4 ja md: `linja.py` toimii (kartoitus luku 6) · 3 tarkistustaito · 4 pdf-luku · 5 taso 3.
 **Käyttöperiaatteet** (luku 1): skannaukset, työtiedostot ja tulokset vain kansioon `local/` (gitignore). Repoon
 menee vain koodi, asetukset, dokumentaatio ja public domain -testiaineisto. Ei julkaisua. Linjauksen ylittävästä
 pyynnöstä huomauta kerran, älä holhoa.

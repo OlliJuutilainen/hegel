@@ -22,6 +22,20 @@ Never run `run_tesseract.py` on a typeset PDF: it rebuilds the pages from images
 throws the real text layer (and its italics) away. You don't need it before
 `pdf_to_markdown.py` either; that does its own OCR.
 
+## Linjasto: camera pages → checked Markdown
+
+`linja.py` turns a folder of phone-camera page images into Markdown without AI (plan: `docs/linjasto.md`,
+in Finnish). Page images go to `local/work/<book>/alkup/`; everything under `local/` stays out of git.
+
+```
+python linja.py valmistele vernunft          # stations 1–4: order, text block mask, two Tesseract readers, flags
+python linja.py kokoa vernunft --otsikko Vernunft --teos Kant-Lexikon   # station 6: local/out/vernunft/vernunft.md
+python linja.py siivoa vernunft              # remove intermediate files; originals and results stay
+```
+
+Settings: `asetukset.toml`; languages and readers: `kieliprofiilit.toml`. Models (tessdata_best) are read from
+`local/tessdata/`, hunspell dictionaries from `local/sanakirjat/`.
+
 ## Setup
 
 ```

@@ -1,0 +1,12 @@
+# Kieliprofiilit (docs/linjasto.md, luku 13). Kieltä ei kovakoodata muualle.
+# lukijat: Tesseract-mallit, ensimmäinen on pääkieli. Muut ovat toisia lukijoita: niiden lukemaa käytetään vain,
+# kun se sisältää merkin, jota pääkielen mallissa ei ole (esim. ř, á, §), muuten ero liputetaan.
+# Kaikkia kieliä ei anneta Tesseractille yhdessä: deu+lat kaksinkertaisti virheet (docs/vertailu.md).
+# sanakirjat: hunspell-sanakirjat ilman päätettä (.dic/.aff), polku repon juuresta. Puuttuva sanakirja ohitetaan.
+
+[kant-lexikon]
+lukijat = ["deu", "script/Latin"]
+kielet = ["deu", "lat", "grc"]
+sanakirjat = ["local/sanakirjat/de_DE_frami"]
+fraktuura = false
+normalisoi_pitka_s = false
