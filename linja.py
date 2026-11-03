@@ -235,7 +235,7 @@ def _nuolidiagnoosi(k) -> None:
             for x0, y0, x1, y1, m in kuv:
                 a = merkit._normaali(m)
                 r = float((a * nu.malli).sum() / (np.linalg.norm(a) * np.linalg.norm(nu.malli) + 1e-9))
-                parhaat.append((round((x1 - x0) / rk[i] / nu.mittasuhde[0], 2), round((y1 - y0) / rk[i] / nu.mittasuhde[1], 2), round(r, 2)))
+                parhaat.append((round(float((x1 - x0) / rk[i] / nu.mittasuhde[0]), 2), round(float((y1 - y0) / rk[i] / nu.mittasuhde[1]), 2), round(r, 2)))
             tulos[avain].append((len(kuv), parhaat))
     print(f"Mallin koko suhteessa riviin: leveys {nu.mittasuhde[0]:.2f}, korkeus {nu.mittasuhde[1]:.2f}; raja {merkit.RAJA}")
     for avain, rivit in tulos.items():
