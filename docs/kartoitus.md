@@ -49,8 +49,8 @@ Kustakin paketista on haettu uusin pyörä, jonka pip hyväksyy macOS 11:n x86_6
 | lxml | 6.1.3 | |
 | pytesseract, pdf2image, pypdf, reportlab, pdfminer.six, tqdm | puhdasta Pythonia | nykyiset riippuvuudet |
 | spylls 0.1.7 | puhdasta Pythonia | hunspell-sanakirjat |
-| pyhfst 1.4.0 | puhdasta Pythonia | HFST-transduktorit, mahdollinen Voikon korvaaja suomelle; sopivaa suomen analysaattoria ei ole kokeiltu |
-| libvoikko 4.3 | puhdasta Pythonia | vain sidos: vaatii järjestelmään C-kirjaston libvoikko ja voikko-fi-sanaston, eli järjestelmäasennuksen |
+| pyhfst 1.4.0 | puhdasta Pythonia | HFST-transduktorit. Suomen sanatarkistus Giellateknon analysaattorilla (`analyser`, 25 Mt, ladataan kerran uralicNLP:n kautta) antoi pilvessä samat tulokset kuin Voikko 20 testisanalla (10 oikeaa, 10 OCR-virheellistä); 220 sanaa 0,03 s:ssa |
+| libvoikko 4.3 | puhdasta Pythonia | vain sidos: vaatii järjestelmään C-kirjaston libvoikko ja voikko-fi-sanaston. Homebrew'ssa ei ole libvoikko-pakettia Big Surille (Intel-paketit vain macOS 13 ja 14), joten Homebrew kääntäisi sen lähdekoodista |
 | **opencv-python** | **ei käytettävissä** | viimeinen macOS 11:lle sopiva pyörä on 4.9.0.80 (macosx_10_16), 4.10 ja uudemmat vaativat macOS 12–14:n. 4.9 on käännetty numpy 1.x:ää vasten: täällä kokeiltu numpy 2:lla, `import cv2` → `ImportError: numpy.core.multiarray failed to import`. numpy 1.26:sta ei ole cp314-pyörää. |
 | **ocrmypdf** | **ei käytettävissä** | 17.13 on puhdasta Pythonia, mutta riippuu pikepdf:stä, jonka macOS x86_64 -pyörät vaativat macOS 15:n. Lisäksi se tarvitsee Ghostscriptin. |
 
@@ -60,6 +60,11 @@ Seuraukset:
   scipyä. `vcrop.py` jätetään ennalleen.
 - Tekstikerros tehdään ocrmypdf:n sijaan nykyisellä `ocr/overlay.py`:llä.
 - Harmaasävy tehdään ilman Ghostscriptia, kuvavaiheessa Pillowin `convert("L")`:llä.
+
+Homebrew (formulae.brew.sh, 3.11.2026): **tesseractille ei ole valmista pakettia millekään Intel-macOS:lle**
+(vain arm64 ja Linux). Jos Macilla ei ole tesseractia valmiina, Homebrew kääntäisi sen lähdekoodista riippuvuuksineen
+(cairo, pango, icu4c, leptonica…) macOS-versiolla, jota se ei enää tue. Siksi Macin `tesseract --version` pitää
+tarkistaa ennen vaihetta 2.
 
 ### 2.2 tessdata_best
 
@@ -107,3 +112,33 @@ Tulos kirjataan `docs/vertailu.md`:hen.
 4. **Python 3.14 ja opencv** (luku 2): ks. 2.1.
 5. **venv**: README:n Setup-osio käyttää kansiota `.venv`, vcrop-osio ja pahvi kansiota `~/hegel/venv`.
 6. Luku 7 viittaa kieliprofiileihin lukuna 12, mutta ne ovat luvussa 13. Pahvi on tallennettu sellaisenaan.
+7. Luku 13: Tesseractille ei voi antaa kaikkia profiilin kieliä kerralla. Latinan lisääminen kaksinkertaisti
+   virheet saksankielisellä sivulla (`docs/vertailu.md`).
+
+## 5. Ollin vastaukset (3.11.2026) ja niistä seuraavat päätökset
+
+1. **Kielet**: Kant-Lexikonissa pääkieli on saksa, ja mukana on ainakin latinaa ja ehkä kreikkaa. Muuten
+   ensisijaisia ovat suomi ja englanti. Aluksi tehdään vain nämä: deu, lat, grc, fin ja eng. Myöhemmin tulevat
+   romania, tanska, ruotsi, ranska ja italia (liettuaa ei mainittu). Muihin kieliin ei käytetä nyt aikaa.
+2. **Markdown**: sen pitää toimia LUiN:ssa ja Clauden lähdeaineistona. LUiN-muotoa muutetaan Claudelle
+   sopivammaksi vain, jos nykyinen ei ole kunnossa. Päätökset:
+   - Etukenttä käyttää Latomon avaimia: `title`, `teos`, `toimittaja`, `sivut` jne. Lähdeteos ei mene avaimeen
+     `lahde`, koska LUiN lukee sen verkko-osoitteeksi.
+   - Linjaston omat avaimet (`kaytto: oma`, `lukijat`, `taso`, `kieliprofiili`) kulkevat mukana. md.js säilyttää
+     ne (`raaka`), eivätkä ne vaikuta viitteeseen (mitattu).
+   - Pahvin sivumerkki `<!-- s. N -->` jää. md.js poistaa sen näkyvistä myös kesken tavutetun sanan
+     (`gege<!-- s. 2507 -->benen` → *gegebenen*), ja Claude näkee sen raakatekstistä. `{p. N}` näkyisi LUiN:ssa
+     tekstinä (mitattu node-ajossa).
+3. **Kultaotos**: Kant-Lexikonin juuri tehty skannaus vanhoilla asetuksilla (oletuskoko, Magic Pro, värit
+   säilytetty). Ensisijainen tulos on md, mutta samalla testataan myös pdf-luku. Olli ei rajaa sivuja käsin
+   CamScannerissa, eikä Note Air -sovitukseen lisätä tekoälyvaihetta.
+   - Ratkaisu: ylä- ja alarajaus tehdään algoritmisesti sivu kerrallaan (vcrop-logiikka), joten tekstilohkon paikka
+     saa vaihdella sivulta toiselle. Testisivulla se toimi (`docs/vertailu.md`).
+   - Avoinna: jotta tekstikoko ei hypi, sivut skaalataan rivivälin mukaan samaan mittakaavaan. Ehdotus odottaa
+     Ollin hyväksyntää ja vaatii vähintään 10 oikeaa sivua.
+4. **CamScannerin vienti**: valikko on kirjattu `docs/camscanner.md`:hen, ja kokeet ovat siellä.
+5. **Voikko**: Olli antoi luvan asentaa, jos asennus kannattaa. Järjestelmäasennusta ei tehdä: Big Surille ei ole
+   Homebrew-pakettia, ja pyhfst ja Giellateknon analysaattori (puhdasta Pythonia) antoivat samat tulokset kuin
+   Voikko. Tämä tarkistetaan vielä isommalla sanajoukolla vaiheessa 2.
+6. **Kursiivi**: tavoitellaan. Testisivulla kursiivisanat erottuvat kallistumasta selvästi, mutta nykyiset
+   kynnykset eivät sovi tähän kirjaan (`docs/vertailu.md`).
