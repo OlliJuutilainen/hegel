@@ -86,6 +86,8 @@ eng, fin, deu, lat, grc, ell, ita, fra, dan, lit, swe, deu_latf (12,9 Mt) ja scr
 - tessdata_best on ladattu kansioon `~/hegel/local/tessdata/`: deu, eng, fin, grc, lat ja script/Latin.
   `tesseract --tessdata-dir` löytää ne.
 - Note Air3:n näyttö on 1404 × 1872 ja 227 ppi (julkaistut tiedot, `docs/vertailu.md`).
+- Tesseract (MacPorts) käyttää yhtä ydintä: Kant-Lexikonin sivu 2152 × 3408 px `deu`-mallilla vie 11,5 s (real ≈ user).
+  `hw.ncpu` on 8 (neljä fyysistä ydintä ja hyperthreading), joten sivut luetaan rinnakkain useana prosessina.
 
 Alkuperäinen tarkistuslista:
 
