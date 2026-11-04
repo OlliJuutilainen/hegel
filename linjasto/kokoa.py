@@ -121,8 +121,24 @@ def paattele_numerot(jarjestys: list[int], numerot: dict, loki: list) -> dict:
     return out
 
 
+def suojaa(teksti: str) -> str:
+    """iA Writerin merkitykselliset merkit kenoviivalla, kuten pdf_to_markdown.py:n _escape:
+    ~ala~, ^ylä^, ==korostus==, $matikka$, *, _, ` sekä viittausten [^ [# [%."""
+    teksti = re.sub(r"([\\*_`~^$])", r"\\\1", teksti)
+    teksti = teksti.replace("==", "\\=\\=")
+    return re.sub(r"\[(?=[\^#%])", r"\\[", teksti)
+
+
+def suojaa_alku(teksti: str) -> str:
+    """Kappaleen alku, joka näyttäisi Markdown- tai iA Writer -merkinnältä (otsikko, lainaus, lista, numeroitu
+    lista, //-kommentti, /tiedosto-liite, +++ sivunvaihto, {{TOC}}), kuten pdf_to_markdown.py:n _escape_block_start."""
+    if re.match(r"^(#{1,6}\s|>|[-+*]\s|/|\+\+\+|\{\{)", teksti):
+        return "\\" + teksti
+    return re.sub(r"^(\d+)([.)]\s)", r"\1\\\2", teksti)
+
+
 def _nayta(w: dict, taso: int) -> str:
-    t = w["teksti"]
+    t = suojaa(w["teksti"])
     return t + "[?]" if w["liput"] and taso == 1 else t
 
 
@@ -242,15 +258,14 @@ def kokoa(sivut: list[dict], tiedostot: dict[int, str], sanakirjat, a: dict, tas
         m = re.match(r"^(<!--.*?-->)", t)
         if m and tyyppi == "otsikko" or m and alaotsikot and _alaotsikko(t[m.end():], n_rivit, sis, k, kappaleet):
             merkki_alku, t = m.group(1) + "\n", t[m.end():]  # sivumerkki omalle rivilleen otsikon eteen
-        t = re.sub(r"^([#>+*-])", r"\\\1", t)  # rivin alun merkit eivät saa muuttua otsikoksi, lainaukseksi tai listaksi
         if tyyppi == "otsikko":
-            runko.append(merkki_alku + "## " + t.lstrip("\\"))
+            runko.append(merkki_alku + "## " + t)
         elif alaotsikot and _alaotsikko(t, n_rivit, sis, k, kappaleet):
             runko.append(merkki_alku + "### " + t)
             loki.append({"sivu": "", "id": "", "lukemat": t, "valittu": "### " + t, "tila": "väliotsikko",
                          "peruste": "lyhyt rivi palstan reunasta, ei lopetusmerkkiä, viimeinen sana isolla"})
         else:
-            runko.append(merkki_alku + t)
+            runko.append(merkki_alku + suojaa_alku(t))
     fm = ["---"] + [f"{k}: {v}" for k, v in etukentta.items() if v not in (None, "")] + ["---", ""]
     md = "\n".join(fm) + "\n" + "\n\n".join(runko) + "\n"
     return unicodedata.normalize("NFC", md), loki
