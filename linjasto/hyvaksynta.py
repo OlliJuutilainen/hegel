@@ -7,6 +7,8 @@
 - lukukelvoton: paras OCR-lukema jää ja liputettuna.
 Pelkkä välilyöntiero johonkin lukemaan hyväksytään, kun varmuus on korkea tai keski (laajennus pahviin, 4.11.2026).
 Rivikohde (id ilman -wNN) jaetaan sanoiksi vain, jos sanamäärä on sama kuin rivillä; muuten rivi jää ennalleen.
+Vastaus voi koskea myös sanaa, jota linjasto ei liputtanut (ihmistarkastajan lisäys, esim. kuvan reunasta katkennut
+sana). Lukukelvoton liputtaa sellaisen sanan, jotta se näkyy tuloksessa ([?]) eikä mene läpi ehjän näköisenä.
 """
 
 from __future__ import annotations
@@ -81,7 +83,10 @@ def sovella(sivut: list[dict], vastaukset: list[dict], sanakirjat, sanasto: set,
                                  "peruste": f"{x.get('tila')}, {x.get('varmuus')}: {peruste}" + (f"; {x['huomio']}" if x.get("huomio") else "")})
                 else:
                     maarat["hylätty"] += 1
+                    if x.get("tila") == "lukukelvoton" and not w["liput"]:
+                        w["liput"] = ["tarkastus_lukukelvoton"]
                     loki.append({"sivu": s["sivu"], "id": w["id"], "lukemat": lukemat, "valittu": w["teksti"],
                                  "tila": "tarkastus_hylätty",
-                                 "peruste": f"ehdotus '{teksti}' ({x.get('tila')}, {x.get('varmuus')}): {peruste}"})
+                                 "peruste": f"ehdotus '{teksti}' ({x.get('tila')}, {x.get('varmuus')}): {peruste}"
+                                            + (f"; {x['huomio']}" if x.get("huomio") else "")})
     return maarat
