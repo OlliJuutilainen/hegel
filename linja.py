@@ -2,7 +2,7 @@
 """Linjasto: kamerakuvista tarkistettuun markdowniin (docs/linjasto.md).
 
     python linja.py valmistele <kirja> [--kielet kant-lexikon] [--lahde KANSIO] [--debug] [--uudelleen]
-    python linja.py kokoa <kirja> [--otsikko ...] [--teos ...] [--sivumerkki nakyva]
+    python linja.py kokoa <kirja> [--otsikko ...] [--teos ...] [--sivumerkki nakyva] [--taso 2]
     python linja.py tilasto <kirja>
     python linja.py siivoa <kirja>
 
@@ -29,7 +29,7 @@ from pathlib import Path
 from linjasto import asetukset as A
 from PIL import Image
 
-from linjasto import geometria, kokoa, liputus, lukijat, merkit, vastaanotto
+from linjasto import geometria, hyvaksynta, kokoa, liputus, lukijat, merkit, vastaanotto
 
 
 def valmistele(args, aset: dict) -> int:
@@ -151,8 +151,20 @@ def kokoa_(args, aset: dict) -> int:
         "kieliprofiili": tila["kielet"],
         "muunnettu": date.today().isoformat(),
     }
-    md, loki = kokoa.kokoa(sivut, {s["sivu"]: s["tiedosto"] for s in sivut}, sanakirjat, aset["kokoa"], 1,
+    loki0 = []
+    if args.taso == 2:
+        vpolku = k.paketti / "vastaukset.json"
+        if not vpolku.exists():
+            raise SystemExit(f"Taso 2 vaatii tiedoston {vpolku} (ocr-tarkistus-taito, docs/linjasto.md luku 9)")
+        sanasto = liputus.kirjan_sanasto([lukijat.sanat(k.lukijat / lukijat.kansio(tila["lukijat"][0]) / f"s{s['sivu']:03d}.tsv")
+                                          for s in sivut], aset["liputus"])
+        maarat = hyvaksynta.sovella(sivut, json.loads(vpolku.read_text(encoding="utf-8")), sanakirjat, sanasto, loki0)
+        print("Tarkastus:", maarat)
+        etukentta["taso"] = 2
+        etukentta["lukijat"] += ", tarkastus ocr-tarkistus"
+    md, loki = kokoa.kokoa(sivut, {s["sivu"]: s["tiedosto"] for s in sivut}, sanakirjat, aset["kokoa"], args.taso,
                            args.sivumerkki, etukentta, alaotsikot=profiili.get("alaotsikot", False))
+    loki = loki0 + loki
     k.out.mkdir(parents=True, exist_ok=True)
     (k.out / f"{args.kirja}.md").write_text(md, encoding="utf-8")
     kokoa.kirjoita_loki(loki, k.out / "muutokset.csv", k.out / "muutokset.md", args.otsikko or args.kirja)
@@ -284,6 +296,8 @@ def main() -> int:
     c.add_argument("--otsikko")
     c.add_argument("--teos")
     c.add_argument("--sivumerkki", choices=["kommentti", "nakyva"], default="kommentti")
+    c.add_argument("--taso", type=int, choices=[1, 2], default=1,
+                   help="2: hyväksy tarkastuksen vastaukset (paketti/vastaukset.json) pahvin luvun 10 säännöillä")
     tl = sub.add_parser("tilasto", help="yhteenveto ilman kirjan tekstiä")
     tl.add_argument("kirja")
     tl.add_argument("--nuolet", action="store_true", help="nuoliehdokkaiden mittaukset (numeroina)")

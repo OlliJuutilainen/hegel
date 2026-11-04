@@ -9,7 +9,7 @@
   lopetusmerkkiä ja seuraava alkaa pienellä (palsta tai sivu vaihtuu kesken kappaleen).
 - Tavutuksen purku: iso alkukirjain jatkossa pitää yhdysmerkin (Anthropologie-Vorlesung), und/oder/... pitää
   viivan ja välilyönnin (Verstandes- und), muuten yhdistetään; ellei yhdistettyä sanaa tunneta, se kirjataan.
-- Tasolla 1 liputettu sana saa perään [?], tiedostossa suojattuna `\\[?\\]`: muuten `[…][?]` on Markdownin
+- Liputettu sana saa perään [?] (tasolla 2 vain, jos tarkastus ei sitä ratkaissut), tiedostossa suojattuna `\\[?\\]`: muuten `[…][?]` on Markdownin
   viittauslinkki (Latomo varoitti 32 kertaa ja merkki katosi; 4.11.2026).
 - Väliotsikko, joka eroaa kirjassa vähintään kolmesti toistuvasta lyhyestä rivistä enintään kahdella merkillä, korjataan
   sen mukaiseksi (Welterführende → Weiterführende); kirjataan lokiin.
@@ -154,7 +154,7 @@ def suojaa_alku(teksti: str) -> str:
 
 def _nayta(w: dict, taso: int) -> str:
     t = suojaa(w["teksti"])
-    return t + LIPPU if w["liput"] and taso == 1 else t
+    return t + LIPPU if w["liput"] else t
 
 
 def kokoa(sivut: list[dict], tiedostot: dict[int, str], sanakirjat, a: dict, taso: int, sivumerkki: str,
@@ -199,7 +199,7 @@ def kokoa(sivut: list[dict], tiedostot: dict[int, str], sanakirjat, a: dict, tas
                              "peruste": w["peruste"]})
             if w["liput"]:
                 loki.append({"sivu": s["sivu"], "id": w["id"], "lukemat": " | ".join(f"{k}: {v}" for k, v in w["lukemat"].items()),
-                             "valittu": w["teksti"] + ("[?]" if taso == 1 else ""), "tila": "liputettu",
+                             "valittu": w["teksti"] + "[?]", "tila": "liputettu",
                              "peruste": ", ".join(w["liput"])})
 
     korkeudet = {s["sivu"]: statistics.median([r["korkeus"] for r in s["rivit"]] or [1]) for s in sivut}

@@ -149,3 +149,19 @@ Kun molemmat lukijat lukivat sanan täsmälleen samoin, pelkkä matala luotettav
 kaikki 8 tällaista sanaa olivat oikein (*empirischer*, *Idee,*, *B*, *672).*, *Philosophische*…). Liputettujen
 osuus laski 3,9 %:sta 3,2 %:iin. Testisivujen virheistä ilman lippua jäi yksi: *Ratlonalität*, jonka molemmat
 lukijat lukivat samoin ja luotettavuudella ≥ 90. Tämän rajan alle sanakirjalippu ei ulotu.
+
+## Taso 2 testisivuilla (4.11.2026)
+
+Tarkastustaito `.claude/skills/ocr-tarkistus` ja hyväksymissäännöt (`linjasto/hyvaksynta.py`, pahvin luku 10;
+laajennus: pelkkä välilyöntiero hyväksytään varmuudella korkea tai keski). Claude tarkasti testisivujen 39 kohdetta
+31 rajauskuvasta: 27 vahvistettu, 12 korjattu, joista 3 matalalla varmuudella. 38 hyväksyttiin ja 2 hylättiin:
+*Wi-* (etäisyys 3) ja *allgemei-* (ei tukea), jotka jäivät liputetuiksi.
+
+| Taso | CER | CER (kirj.) | WER | Liputuksia | Uskottavat väärät sanat |
+|---|---|---|---|---|---|
+| 1 | 0,29 % | 0,18 % | 2,26 % | 38 | 0 |
+| 2 | 0,12 % | 0,09 % | 0,59 % | 2 | 0 |
+
+**Varaus:** sama Claude teki kultalitteroinnin ja tarkastuksen, joten ne eivät ole toisistaan riippumattomia. *seiner*
+hyväksyttiin matalalla varmuudella sanakirjan tuella, koska rajauskuvassa i:n piste ei erotu. Tulos on oikea, mutta
+se on päätelty eikä luettu kuvasta, ja se näkyy lokissa.

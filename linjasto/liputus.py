@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import json
 import re
+import shutil
 import unicodedata
 from collections import Counter
 from pathlib import Path
@@ -179,6 +180,8 @@ def arvioi_sivu(sivu: int, paa: list[Sana], muut: dict[str, list[Sana]], paa_mer
 def paketti(sivut: list[dict], kuvat: dict[int, Path], kohde: Path, kielet: list[str]) -> int:
     """kohteet.json ja rivien rajauskuvat (rivin korkuinen, puolen rivin marginaali)."""
     rajaukset = kohde / "rajaukset"
+    if rajaukset.exists():
+        shutil.rmtree(rajaukset)  # edellisen ajon rajaukset pois; vastaukset.json säilyy
     rajaukset.mkdir(parents=True, exist_ok=True)
     kohteet = []
     for sivu in sivut:
@@ -193,7 +196,7 @@ def paketti(sivut: list[dict], kuvat: dict[int, Path], kohde: Path, kielet: list
             x0, y0, x1, y1 = r["bbox"]
             m = (y1 - y0) // 2
             nimi = f"{r['id']}.png"
-            kuva.crop((max(0, x0 - m), max(0, y0 - m), min(kuva.width, x1 + m), min(kuva.height, y1 + m))).save(rajaukset / nimi)
+            kuva.crop((max(0, x0 - m), max(0, y0 - m), min(kuva.width, x1 + m), min(kuva.height, y1 + m))).convert("L").save(rajaukset / nimi)
 
             def kohde_(id_, ws, syyt, conf):
                 i, j = kaikki.index(ws[0]), kaikki.index(ws[-1])
