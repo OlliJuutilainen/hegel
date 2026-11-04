@@ -120,6 +120,10 @@ def arvioi_sivu(sivu: int, paa: list[Sana], muut: dict[str, list[Sana]], paa_mer
                                 "peruste": "nuoli → tunnistettu kuvasta (kirjan oma mallikuva)"})
                 continue
             pilkku = (kuva is not None and a.get("piste_pilkku") and s.teksti.endswith(",") and len(s.teksti) > 1)
+            if pilkku and i + 1 < len(paa) and paa[i + 1].teksti.lstrip("„“\"'‚(")[:1].islower():
+                # Pienellä alkava seuraava sana: virke ei pääty, joten pilkku jää (Vernunft-ajossa 8/106
+                # kuvasta korjatusta pisteestä oli tällaisia, 4.11.2026).
+                pilkku = False
             if pilkku:
                 toiset = [ss[k[i]].teksti for k, ss in kohdistus.values() if i in k]
                 eri = any(t == s.teksti[:-1] + "." for t in toiset)
