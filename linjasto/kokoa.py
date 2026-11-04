@@ -9,7 +9,10 @@
   lopetusmerkkiä ja seuraava alkaa pienellä (palsta tai sivu vaihtuu kesken kappaleen).
 - Tavutuksen purku: iso alkukirjain jatkossa pitää yhdysmerkin (Anthropologie-Vorlesung), und/oder/... pitää
   viivan ja välilyönnin (Verstandes- und), muuten yhdistetään; ellei yhdistettyä sanaa tunneta, se kirjataan.
-- Tasolla 1 liputettu sana saa perään [?].
+- Tasolla 1 liputettu sana saa perään [?], tiedostossa suojattuna `\\[?\\]`: muuten `[…][?]` on Markdownin
+  viittauslinkki (Latomo varoitti 32 kertaa ja merkki katosi; 4.11.2026).
+- Väliotsikko, joka eroaa kirjassa vähintään kolmesti toistuvasta lyhyestä rivistä enintään kahdella merkillä, korjataan
+  sen mukaiseksi (Welterführende → Weiterführende); kirjataan lokiin.
 """
 
 from __future__ import annotations
@@ -32,6 +35,8 @@ KIRJALLISUUS = re.compile("^(" + "|".join([
     "((weiterführende|ausgewählte|verwendete|zitierte) )?literatur", "literaturverzeichnis", "literaturhinweise",
     "literaturangaben", "(primär|sekundär)literatur", "bibliographie", "bibliografie", "quellen", "quellenverzeichnis",
     "quellen und literatur", "quellen- und literaturverzeichnis"]) + ")$", re.I)
+
+LIPPU = "\\[?\\]"  # näkyy tekstissä muodossa [?]
 
 LOPETUS = ".:!?“”\")»…"
 SIDOKSET = {"und", "oder", "bzw.", "sowie", "and", "or", "ja", "tai", "sekä", "och", "eller", "et", "ou", "e", "o"}
@@ -149,7 +154,7 @@ def suojaa_alku(teksti: str) -> str:
 
 def _nayta(w: dict, taso: int) -> str:
     t = suojaa(w["teksti"])
-    return t + "[?]" if w["liput"] and taso == 1 else t
+    return t + LIPPU if w["liput"] and taso == 1 else t
 
 
 def kokoa(sivut: list[dict], tiedostot: dict[int, str], sanakirjat, a: dict, taso: int, sivumerkki: str,
@@ -174,6 +179,8 @@ def kokoa(sivut: list[dict], tiedostot: dict[int, str], sanakirjat, a: dict, tas
         if sivumerkki == "nakyva":
             return f"{{s. {n if n is not None else '?'}}}"
         return f"<!-- s. {n} -->" if n is not None else f"<!-- s. ? {tiedostot[sivu]} -->"
+
+    korjaa_toistuvat_otsikot(sivut, poista, loki)
 
     # Rivit järjestyksessä: (sivu, rivi, onko sivun ensimmäinen leipätekstirivi)
     jono = []
@@ -243,7 +250,7 @@ def kokoa(sivut: list[dict], tiedostot: dict[int, str], sanakirjat, a: dict, tas
                     and kappaleet[-1][0] == "kpl" and kappaleet[-1][2] == 1
                     and ed_rivi["sanat"][-1]["teksti"][-1:] not in LOPETUS + ",;"
                     and 0.01 * p < r["bbox"][0] - ed_rivi["bbox"][0] < 0.1 * p)
-        puhdas = re.sub(r"<!--.*?-->|\[\?\]", "", teksti).strip()
+        puhdas = re.sub(r"<!--.*?-->", "", teksti).replace(LIPPU, "").strip()
         sis = sisennys(s, r)
         if otsikko:
             kirjallisuudessa = False
@@ -303,11 +310,35 @@ def kokoa(sivut: list[dict], tiedostot: dict[int, str], sanakirjat, a: dict, tas
     return unicodedata.normalize("NFC", md), loki
 
 
+def korjaa_toistuvat_otsikot(sivut: list[dict], poista: dict, loki: list) -> None:
+    """Lyhyt rivi (enintään 6 sanaa), joka eroaa kirjassa vähintään kolmesti samana toistuvasta lyhyestä rivistä
+    enintään kahdella merkillä ja jolla on yhtä monta sanaa, korjataan sen mukaiseksi: lexikonin väliotsikot
+    (Welterführende → Weiterführende Literatur, Funktlon → Funktion; Vernunft 4.11.2026). Korjattujen sanojen liput
+    poistuvat, koska toistuva muoto on parempi todiste kuin yksittäinen lukema."""
+    from rapidfuzz.distance import Levenshtein
+    lyhyet = [(s, r) for s in sivut for r in s["rivit"] if r["id"] not in poista[s["sivu"]] and len(r["sanat"]) <= 6]
+    teksti = lambda r: " ".join(w["teksti"] for w in r["sanat"])
+    laskuri = Counter(teksti(r) for _, r in lyhyet)
+    yleiset = [k for k, n in laskuri.items() if n >= 3 and len(k) >= 10 and re.search(r"[^\W\d_]{4}", k)]
+    for s, r in lyhyet:
+        k = teksti(r)
+        if laskuri[k] >= 3:
+            continue
+        for y in yleiset:
+            if len(y.split()) == len(r["sanat"]) and 0 < Levenshtein.distance(k, y) <= 2:
+                for w, uusi in zip(r["sanat"], y.split()):
+                    if w["teksti"] != uusi:
+                        loki.append({"sivu": s["sivu"], "id": w["id"], "lukemat": w["teksti"], "valittu": uusi,
+                                     "tila": "otsikko_kirjan_mukaan", "peruste": f"toistuva rivi '{y}' ({laskuri[y]} kertaa)"})
+                        w["teksti"], w["liput"] = uusi, []
+                break
+
+
 def _alaotsikko(t: str, n_rivit: int, sis: float | None, k: int, kappaleet: list) -> bool:
     """Väliotsikko (### ): 1–2 rivin kappale palstan vasemmasta reunasta, enintään 10 sanaa, ei lopetus- tai
     välimerkkiä lopussa eikä pisteeseen päättyvää sanaa keskellä, alkaa isolla tai numerolla, viimeinen sana
     alkaa isolla (saksan substantiivi; kieliprofiilin 'alaotsikot'), ja sen jälkeen tulee leipätekstiä."""
-    sanat = t.replace("[?]", "").split()
+    sanat = t.replace(LIPPU, "").split()
     if KIRJALLISUUS.match(re.sub(r"<!--.*?-->", "", " ".join(sanat)).strip()) and k + 1 < len(kappaleet):
         return True
     if not sanat or n_rivit > 2 or len(sanat) > 10 or sis is None or abs(sis) > 0.03:
@@ -329,19 +360,19 @@ def _jatkuu(ed: dict | None, r: dict) -> bool:
 
 def _liita(kpl: str, rivi: str, ed: dict, r: dict, tunnettu, yhdyssanat, sivu: int, loki: list) -> str:
     """Rivin liitos kappaleeseen, tavutus purettuna. Sivumerkki voi olla rivin alussa."""
-    lippu = kpl.endswith("-[?]")
-    pohja = kpl[:-3] if lippu else kpl
+    lippu = kpl.endswith("-" + LIPPU)
+    pohja = kpl[:-len(LIPPU)] if lippu else kpl
     if not pohja.endswith("-") or pohja.endswith("--"):
         return kpl + " " + rivi
     kpl = pohja
     m = re.match(r"^((?:<!--.*?-->|\{s\. [^}]*\})?)(\S*)(.*)$", rivi, re.S)
     merkki, jatko, loput = m.group(1), m.group(2), m.group(3)
-    if jatko.endswith("[?]"):
-        jatko, lippu = jatko[:-3], True
+    if jatko.endswith(LIPPU):
+        jatko, lippu = jatko[:-len(LIPPU)], True
     if lippu:  # tavutetun sanan lippu yhdistetyn sanan perään
-        jatko += "[?]"
+        jatko += LIPPU
     alku = kpl.rsplit(" ", 1)[-1][:-1]
-    a, b = ydin(alku), ydin(jatko.replace("[?]", ""))
+    a, b = ydin(alku), ydin(jatko.replace(LIPPU, ""))
     if jatko[:1].isupper():
         tulos, tila = kpl + merkki + jatko + loput, "yhdysmerkki_säilytetty"
     elif b.lower() in SIDOKSET:
