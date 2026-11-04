@@ -152,7 +152,10 @@ def arvioi_sivu(sivu: int, paa: list[Sana], muut: dict[str, list[Sana]], paa_mer
                     valittu, peruste = toinen.teksti, f"{m}: merkki {''.join(sorted(uudet))} puuttuu pääkielen mallista"
                 else:
                     liput.append("lukijat_eri_mieltä")
-            if s.conf < a["luottamus_raja"]:
+            # Kun kaikki lukijat lukivat sanan täsmälleen samoin, pelkkä matala luotettavuus ei liputa: testisivuilla
+            # kaikki 8 tällaista sanaa olivat oikein (4.11.2026). Ilman toisen lukijan vastinetta lippu jää.
+            yksimielinen = bool(muut) and all(lukemat.get(m) == s.teksti for m in muut)
+            if s.conf < a["luottamus_raja"] and not yksimielinen:
                 liput.append("matala_luottamus")
             if OUTO.search(valittu):
                 liput.append("outo_merkki")

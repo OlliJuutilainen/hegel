@@ -142,3 +142,10 @@ Kun lukijat ovat eri mieltä, raja on väljä (laskeuma ≤ 0,10 ja korkeus ≤ 
 on tiukka (≤ 0,02 ja ≤ 0,40). Testisivuilla kaikki 11 pilkuksi luettua pistettä korjautuivat, eikä yksikään oikea
 pilkku muuttunut. Koottu md poikkesi kullasta CER 0,42 % → 0,29 %. **Rajat on määritetty samoilla kahdella
 sivulla**, joten ne tarkistetaan uusilla kultasivuilla. Muutosloki: tila `piste_kuvasta`.
+
+## Yksimielinen matala luotettavuus (4.11.2026)
+
+Kun molemmat lukijat lukivat sanan täsmälleen samoin, pelkkä matala luotettavuus ei enää liputa. Testisivuilla
+kaikki 8 tällaista sanaa olivat oikein (*empirischer*, *Idee,*, *B*, *672).*, *Philosophische*…). Liputettujen
+osuus laski 3,9 %:sta 3,2 %:iin. Testisivujen virheistä ilman lippua jäi yksi: *Ratlonalität*, jonka molemmat
+lukijat lukivat samoin ja luotettavuudella ≥ 90. Tämän rajan alle sanakirjalippu ei ulotu.
