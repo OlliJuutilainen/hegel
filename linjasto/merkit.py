@@ -116,3 +116,32 @@ def korvaa(teksti: str, kuvio: int) -> str | None:
         loput = teksti[2:]
         return "(→" + (" " + loput if loput else "")
     return None
+
+
+# --------------------------------------------------------------------------------------
+# Piste vai pilkku sanan lopussa: pilkku ulottuu perusviivan alle ja on korkeampi.
+# Mitattu kahdella Kant-Lexikonin testisivulla (x-korkeuden osina): pilkut laskeutuvat 0,06–0,46 ja ovat
+# 0,38–0,64 korkeita, pilkuksi luetut pisteet laskeutuvat enintään 0,08 ja ovat 0,23–0,38 korkeita.
+# --------------------------------------------------------------------------------------
+
+def loppumerkki(g: np.ndarray, bbox) -> tuple[float, float] | None:
+    """Sanan viimeisen mustekuvion (laskeuma perusviivan alle, korkeus) x-korkeuden osina."""
+    kuv = _kuviot(g, bbox)
+    if len(kuv) < 2:
+        return None
+    viim = max(kuv, key=lambda k: k[2])
+    muut = [k for k in kuv if k is not viim]
+    perus = float(np.median([k[3] for k in muut]))
+    xk = float(np.median([k[3] - k[1] for k in muut]))
+    if xk <= 0:
+        return None
+    return (viim[3] - perus) / xk, (viim[3] - viim[1]) / xk
+
+
+def onko_piste(mitat: tuple[float, float] | None, lukijat_eri: bool, a: dict) -> bool:
+    if mitat is None:
+        return False
+    laskeuma, korkeus = mitat
+    if lukijat_eri:
+        return laskeuma <= a["piste_laskeuma_eri"] and korkeus <= a["piste_korkeus_eri"]
+    return laskeuma <= a["piste_laskeuma"] and korkeus <= a["piste_korkeus"]

@@ -130,3 +130,15 @@ Vernunft, 33 sivua (Ollin Mac, 3.11.2026): mallikuva syntyi 80 tapauksesta, ja n
   ovat erillisiä kuvioita. Nyt tällainen leveä kuvio hyväksytään korrelaatiolla ≥ 0,85.
 - Loput 17 ovat joko kapeita kuvioita, joiden korrelaatio on 0,09–0,44, tai litteitä viivoja (korkeus 0,04–0,17
   mallista). Ne jäävät liputetuiksi.
+
+## Piste vai pilkku (4.11.2026)
+
+Sanan lopun pilkku ratkaistaan kuvasta (`merkit.loppumerkki`), koska pilkku ulottuu perusviivan alle ja on
+korkeampi. Mitat ovat x-korkeuden osina, testisivuilta:
+- oikeat pilkut laskeutuvat 0,06–0,46 ja ovat 0,38–0,64 korkeita
+- pilkuksi luetut pisteet laskeutuvat enintään 0,08 ja ovat 0,23–0,38 korkeita
+
+Kun lukijat ovat eri mieltä, raja on väljä (laskeuma ≤ 0,10 ja korkeus ≤ 0,45). Kun molemmat lukivat pilkun, raja
+on tiukka (≤ 0,02 ja ≤ 0,40). Testisivuilla kaikki 11 pilkuksi luettua pistettä korjautuivat, eikä yksikään oikea
+pilkku muuttunut. Koottu md poikkesi kullasta CER 0,42 % → 0,29 %. **Rajat on määritetty samoilla kahdella
+sivulla**, joten ne tarkistetaan uusilla kultasivuilla. Muutosloki: tila `piste_kuvasta`.

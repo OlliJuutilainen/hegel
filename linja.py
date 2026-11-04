@@ -111,7 +111,7 @@ def valmistele(args, aset: dict) -> int:
     for s in sivut:
         arvio = liputus.arvioi_sivu(s["n"], paa_sanat[s["n"]], {m: lue(m, s["n"]) for m in muut},
                                     paa_merkisto, sanakirjat, sanasto, aset["liputus"],
-                                    nuoli=nuoli, kuva=kuva(s["n"]) if nuoli else None)
+                                    nuoli=nuoli, kuva=kuva(s["n"]) if nuoli or aset["liputus"].get("piste_pilkku") else None)
         arvio["tiedosto"] = s["tiedosto"]
         arvio["lohko"] = lohkot.get(s["n"])
         (k.sivut / f"s{s['n']:03d}.json").write_text(json.dumps(arvio, ensure_ascii=False), encoding="utf-8")
@@ -123,9 +123,10 @@ def valmistele(args, aset: dict) -> int:
         raise SystemExit("Lukijat eivät tuottaneet yhtään sanaa. Tarkista kansio lukijat/ ja tesseractin virheet.")
     n_lip = sum(1 for a in arvioidut for r in a["rivit"] for w in r["sanat"] if w["liput"])
     n_nuoli = sum(1 for a in arvioidut for r in a["rivit"] for w in r["sanat"] if w["peruste"].startswith("nuoli"))
-    n_toinen = sum(1 for a in arvioidut for r in a["rivit"] for w in r["sanat"] if w["peruste"]) - n_nuoli
+    n_piste = sum(1 for a in arvioidut for r in a["rivit"] for w in r["sanat"] if w["peruste"].startswith("piste"))
+    n_toinen = sum(1 for a in arvioidut for r in a["rivit"] for w in r["sanat"] if w["peruste"]) - n_nuoli - n_piste
     print(f"Asema 4: {n_sanat} sanaa, liputettu {n_lip} ({n_lip / max(n_sanat, 1):.1%}), toisen lukijan lukema "
-          f"{n_toinen}, nuolia kuvasta {n_nuoli}; tarkistuspaketissa {n_kohteet} kohdetta ({k.paketti / 'kohteet.json'})")
+          f"{n_toinen}, nuolia kuvasta {n_nuoli}, pisteitä kuvasta {n_piste}; tarkistuspaketissa {n_kohteet} kohdetta ({k.paketti / 'kohteet.json'})")
     k.kirjoita_tila({"kielet": profiilin_nimi, "lukijat": profiili["lukijat"], "valmisteltu": date.today().isoformat()})
     return 0
 
@@ -186,6 +187,8 @@ def tilasto(args, aset: dict) -> int:
                     lyhyet[w["teksti"]] += 1
                 if w["peruste"].startswith("nuoli"):
                     merkit2["→ (kuvasta)"] += 1
+                elif w["peruste"].startswith("piste"):
+                    merkit2[", → . (kuvasta)"] += 1
                 elif w["peruste"]:
                     merkit2[w["peruste"].split("merkki ")[1].split(" ")[0]] += 1
     print(f"Sivuja {len(sivut)}. Liputussyyt (sana voi saada monta):", dict(syyt.most_common()))

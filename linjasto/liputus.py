@@ -21,7 +21,7 @@ from PIL import Image
 from rapidfuzz.distance import Levenshtein
 
 from .lukijat import Sana
-from .merkit import korvaa, rivikorkeudet
+from .merkit import korvaa, loppumerkki, onko_piste, rivikorkeudet
 
 REUNA = ".,;:!?()[]{}„“”\"'‚‘’»«–—/…*"
 OUTO = re.compile(r"[<>+&|\\{}©®°~^¢£¥ı]|^[A-ZÄÖÜ]\d{2,}|\d[A-Za-zÄÖÜäöüß]{2,}|[A-Za-zÄÖÜäöüß]\d")
@@ -119,13 +119,20 @@ def arvioi_sivu(sivu: int, paa: list[Sana], muut: dict[str, list[Sana]], paa_mer
                                 "conf": round(s.conf, 1), "bbox": [s.x0, s.y0, s.x1, s.y1], "liput": [],
                                 "peruste": "nuoli → tunnistettu kuvasta (kirjan oma mallikuva)"})
                 continue
+            pilkku = (kuva is not None and a.get("piste_pilkku") and s.teksti.endswith(",") and len(s.teksti) > 1)
+            if pilkku:
+                toiset = [ss[k[i]].teksti for k, ss in kohdistus.values() if i in k]
+                eri = any(t == s.teksti[:-1] + "." for t in toiset)
+                if onko_piste(loppumerkki(kuva, (s.x0, s.y0, s.x1, s.y1)), eri, a):
+                    valittu = s.teksti[:-1] + "."
+                    peruste = "piste kuvasta: merkki ei laskeudu perusviivan alle" + (" (lukijat eri mieltä)" if eri else "")
             paa_sana = tavu.get(i, ydin(s.teksti))
             paa_tunnettu = bool(re.search(r"[^\W\d_]", paa_sana)) and (
                 paa_sana in sanasto or (sanakirjat.kirjat and sanakirjat.tuntee(paa_sana)))
             for m, (k, ss) in kohdistus.items():
                 toinen = ss[k[i]] if i in k else None
                 lukemat[m] = toinen.teksti if toinen else None
-                if toinen is None or toinen.teksti == s.teksti:
+                if toinen is None or toinen.teksti == s.teksti or toinen.teksti == valittu:
                     continue
                 # Ero vain välilyönnissä: 'B 383' / 'B383' ei ole erimielisyys.
                 naapurit = paa_t[max(0, i - 1):i + 2]

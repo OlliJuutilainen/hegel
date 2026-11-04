@@ -23,7 +23,14 @@ sanakirja_luottamus = 90             # sanakirjasta puuttuva sana liputetaan, jo
 kirjan_sanasto_min = 3               # näin monta varmaa esiintymää tekee sanasta kirjan oman sanan
 kirjan_sanasto_luottamus = 90
 toisen_lukijan_luottamus = 70        # toisen lukijan lukema valitaan, jos sen merkki puuttuu pääkielen mallista
-rivi_osuus = 0.5                     # rivi liputetaan, jos näin suuri osa sen sanoista on liputettu (väh. 3 sanaa)
+rivi_osuus = 0.5
+# Sanan lopun pilkku vai piste kuvasta (linjasto/merkit.py), x-korkeuden osina.
+# Lukijoiden ollessa eri mieltä riittää väljempi raja, kun molemmat lukivat pilkun, vaaditaan tiukempi.
+piste_pilkku = true
+piste_laskeuma_eri = 0.10
+piste_korkeus_eri = 0.45
+piste_laskeuma = 0.02
+piste_korkeus = 0.40                     # rivi liputetaan, jos näin suuri osa sen sanoista on liputettu (väh. 3 sanaa)
 
 [kokoa]
 juokseva_osuus = 0.30                # juoksevan otsikon pitää toistua näin monella sivulla
