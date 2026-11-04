@@ -204,6 +204,20 @@ def tilasto(args, aset: dict) -> int:
                     nuolet[alku if len(alku) <= 2 else alku[:2] + "…"] += 1
     if nuolet:
         print("Nuoleksi korjatut alkuperäiset lukemat (alku):", dict(nuolet.most_common()))
+    # Kuvasta korjatun pisteen jälkeen pitäisi alkaa virke: pieni alkukirjain on varoitusmerkki.
+    jalkeen = collections.Counter()
+    for p in sivut:
+        d = json.loads(p.read_text(encoding="utf-8"))
+        kaikki = [w for r in d["rivit"] for w in r["sanat"]]
+        for i, w in enumerate(kaikki):
+            if w["peruste"].startswith("piste"):
+                eri = "eri mieltä" if "eri mieltä" in w["peruste"] else "samaa mieltä"
+                seur = kaikki[i + 1]["teksti"].lstrip("„“\"'‚(") if i + 1 < len(kaikki) else ""
+                laji = "iso" if seur[:1].isupper() else "pieni" if seur[:1].islower() else "muu"
+                jalkeen[(eri, laji)] += 1
+    if jalkeen:
+        print("Kuvasta korjatun pisteen jälkeen (lukijat, seuraavan sanan alku):",
+              {f"{a}/{b}": n for (a, b), n in sorted(jalkeen.items())})
     if args.nuolet:
         _nuolidiagnoosi(k)
     return 0
