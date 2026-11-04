@@ -179,5 +179,9 @@ Poikkeamat ja täsmennykset:
 - **Nimet**: toisen lukijan valitsema nimi saa silti `[?]`:n, jos sitä ei ole sanakirjassa. Tämä on varovaista
   ja voidaan muuttaa.
 - **Sanakirja**: hunspell de_DE_frami (LibreOffice) spyllsillä, kansiossa `local/sanakirjat/`.
-- **Ei vielä**: nuoli → ja piste–pilkku-korjaus kuvasta (9 + 9 jäljellä olevista 32 korvausvirheestä
-  testisivuilla), kursiivi, alaviitteet `[^s12-1]`, ihmistarkistussivu ja Original-parit.
+- **Tehty 4.11.2026**: nuoli kuvasta (`merkit.py`), piste vai pilkku kuvasta, juokseva otsikko sivun paikasta ja
+  sivunumerojärjestyksestä (puuttuva sivu kirjataan), väliotsikot `###`, iA Writer -suojaus (`suojaa`, `suojaa_alku`),
+  yksimielinen lukema ei liputu pelkän luotettavuuden takia. Vernunft (33 s.): liputettu 3,3 %, nuolia 93, pisteitä
+  98, väliotsikoita 89, sivumerkit 2486–2519 ilman aukkoja paitsi puuttuva 2506.
+- **Ei vielä**: kursiivi, alaviitteet `[^s12-1]`, `[?]` pois otsikoista, ihmistarkistussivu, Original-parit, vaihe 3
+  (tarkistustaito).
