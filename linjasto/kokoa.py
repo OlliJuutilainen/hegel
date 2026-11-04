@@ -23,6 +23,16 @@ from datetime import date
 
 from .liputus import ydin
 
+# Kirjallisuusosion otsikko (sama nimilista kuin Luinin md.js:n BIB-säännössä, 4.11.2026; pidä samana).
+KIRJALLISUUS = re.compile("^(" + "|".join([
+    "kirjallisuus", "kirjallisuusluettelo", "kirjallisuutta", "käytetty kirjallisuus", "lähdekirjallisuus",
+    "suositeltavaa kirjallisuutta", "lisälukemista", "lähteet", "lähdeluettelo", "lähteet ja kirjallisuus", "bibliografia",
+    "references", "reference list", "bibliography", "select(ed)? bibliography", "works cited", "literature cited", "literature",
+    "sources", "(further|suggested|recommended|additional) reading", "(references|bibliography) and further reading",
+    "((weiterführende|ausgewählte|verwendete|zitierte) )?literatur", "literaturverzeichnis", "literaturhinweise",
+    "literaturangaben", "(primär|sekundär)literatur", "bibliographie", "bibliografie", "quellen", "quellenverzeichnis",
+    "quellen und literatur", "quellen- und literaturverzeichnis"]) + ")$", re.I)
+
 LOPETUS = ".:!?“”\")»…"
 SIDOKSET = {"und", "oder", "bzw.", "sowie", "and", "or", "ja", "tai", "sekä", "och", "eller", "et", "ou", "e", "o"}
 NUMERO = re.compile(r"^\d{1,4}$")
@@ -214,6 +224,7 @@ def kokoa(sivut: list[dict], tiedostot: dict[int, str], sanakirjat, a: dict, tas
     # kappale: [tyyppi, teksti, rivit, ensimmäisen rivin sisennys]
     kappaleet: list[list] = []
     ed_sivu, ed_rivi, ed_tess, ed_lyhyt = None, None, None, False
+    kirjallisuudessa = False
     for s, r in jono:
         sanat = [_nayta(w, taso) for w in r["sanat"]]
         uusi_sivu = s["sivu"] != ed_sivu
@@ -232,6 +243,27 @@ def kokoa(sivut: list[dict], tiedostot: dict[int, str], sanakirjat, a: dict, tas
                     and kappaleet[-1][0] == "kpl" and kappaleet[-1][2] == 1
                     and ed_rivi["sanat"][-1]["teksti"][-1:] not in LOPETUS + ",;"
                     and 0.01 * p < r["bbox"][0] - ed_rivi["bbox"][0] < 0.1 * p)
+        puhdas = re.sub(r"<!--.*?-->|\[\?\]", "", teksti).strip()
+        sis = sisennys(s, r)
+        if otsikko:
+            kirjallisuudessa = False
+        elif KIRJALLISUUS.match(puhdas):
+            kirjallisuudessa = True
+            kappaleet.append(["kpl", teksti, 1, sis])
+            ed_lyhyt, ed_sivu, ed_rivi, ed_tess = True, s["sivu"], r, tess
+            continue
+        elif kirjallisuudessa and not oikealla and sis is not None and kappaleet and kappaleet[-1][0] == "kpl":
+            # Kirjallisuusosio: riippuva sisennys ratkaisee. Palstan reunasta alkava rivi aloittaa uuden lähteen,
+            # sisennetty jatkaa edellistä, myös palstan tai sivun vaihtuessa (käyttäjän pyyntö 4.11.2026).
+            if sis <= 0.03:
+                kappaleet.append(["kpl", teksti, 1, sis])
+            else:
+                kappaleet[-1][1] = _liita(kappaleet[-1][1], teksti, ed_rivi, r, tunnettu, yhdyssanat, s["sivu"], loki)
+                kappaleet[-1][2] += 1
+            ed_lyhyt, ed_sivu, ed_rivi, ed_tess = False, s["sivu"], r, tess
+            continue
+        elif kirjallisuudessa and oikealla:
+            kirjallisuudessa = False  # allekirjoitus päättää luettelon
         if otsikko:
             if (kappaleet and kappaleet[-1][0] == "otsikko" and ed_rivi is not None and not uusi_sivu
                     and ed_rivi["korkeus"] >= a["otsikko_kerroin"] * korkeudet[s["sivu"]]):
@@ -276,6 +308,8 @@ def _alaotsikko(t: str, n_rivit: int, sis: float | None, k: int, kappaleet: list
     välimerkkiä lopussa eikä pisteeseen päättyvää sanaa keskellä, alkaa isolla tai numerolla, viimeinen sana
     alkaa isolla (saksan substantiivi; kieliprofiilin 'alaotsikot'), ja sen jälkeen tulee leipätekstiä."""
     sanat = t.replace("[?]", "").split()
+    if KIRJALLISUUS.match(re.sub(r"<!--.*?-->", "", " ".join(sanat)).strip()) and k + 1 < len(kappaleet):
+        return True
     if not sanat or n_rivit > 2 or len(sanat) > 10 or sis is None or abs(sis) > 0.03:
         return False
     if k + 1 >= len(kappaleet) or kappaleet[k + 1][0] == "otsikko":
