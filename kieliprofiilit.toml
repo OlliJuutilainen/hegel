@@ -2,6 +2,8 @@
 # lukijat: Tesseract-mallit, ensimmäinen on pääkieli. Muut ovat toisia lukijoita: niiden lukemaa käytetään vain,
 # kun se sisältää merkin, jota pääkielen mallissa ei ole (esim. ř, á, §), muuten ero liputetaan.
 # Kaikkia kieliä ei anneta Tesseractille yhdessä: deu+lat kaksinkertaisti virheet (docs/vertailu.md).
+# alaotsikot: lyhyet palstan reunasta alkavat rivit, joiden viimeinen sana alkaa isolla, ovat ### -otsikoita
+#   (saksan substantiivit; ei sovi kieliin, joissa otsikon viimeinen sana on usein pienellä).
 # nuoli: kirjan ristiviitenuoli → tunnistetaan kuvasta (linjasto/merkit.py).
 # sanakirjat: hunspell-sanakirjat ilman päätettä (.dic/.aff), polku repon juuresta. Puuttuva sanakirja ohitetaan.
 
@@ -12,3 +14,4 @@ sanakirjat = ["local/sanakirjat/de_DE_frami"]
 fraktuura = false
 normalisoi_pitka_s = false
 nuoli = true
+alaotsikot = true

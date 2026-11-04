@@ -152,7 +152,7 @@ def kokoa_(args, aset: dict) -> int:
         "muunnettu": date.today().isoformat(),
     }
     md, loki = kokoa.kokoa(sivut, {s["sivu"]: s["tiedosto"] for s in sivut}, sanakirjat, aset["kokoa"], 1,
-                           args.sivumerkki, etukentta)
+                           args.sivumerkki, etukentta, alaotsikot=profiili.get("alaotsikot", False))
     k.out.mkdir(parents=True, exist_ok=True)
     (k.out / f"{args.kirja}.md").write_text(md, encoding="utf-8")
     kokoa.kirjoita_loki(loki, k.out / "muutokset.csv", k.out / "muutokset.md", args.otsikko or args.kirja)

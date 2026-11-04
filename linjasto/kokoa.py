@@ -127,7 +127,7 @@ def _nayta(w: dict, taso: int) -> str:
 
 
 def kokoa(sivut: list[dict], tiedostot: dict[int, str], sanakirjat, a: dict, taso: int, sivumerkki: str,
-          etukentta: dict) -> tuple[str, list[dict]]:
+          etukentta: dict, alaotsikot: bool = False) -> tuple[str, list[dict]]:
     loki: list[dict] = []
     poista, numerot = juoksevat(sivut, a["juokseva_osuus"])
     numerot = paattele_numerot([s["sivu"] for s in sivut], numerot, loki)
@@ -176,7 +176,27 @@ def kokoa(sivut: list[dict], tiedostot: dict[int, str], sanakirjat, a: dict, tas
     for s in sivut:
         lev = [r["bbox"][2] - r["bbox"][0] for r in s["rivit"] if len(r["sanat"]) >= 5]
         palsta[s["sivu"]] = statistics.median(lev) if lev else None
-    kappaleet: list[list] = []  # [tyyppi, teksti]
+    # Palstojen vasemmat reunat sivuittain (vähintään viiden sanan rivien alut ryhmiteltyinä).
+    vasemmat = {}
+    for s in sivut:
+        alut = sorted(r["bbox"][0] for r in s["rivit"] if len(r["sanat"]) >= 5)
+        ryhmat = []
+        for x in alut:
+            if ryhmat and palsta[s["sivu"]] and x - ryhmat[-1][-1] < 0.3 * palsta[s["sivu"]]:
+                ryhmat[-1].append(x)
+            else:
+                ryhmat.append([x])
+        vasemmat[s["sivu"]] = [statistics.median(g) for g in ryhmat if len(g) >= 3]
+
+    def sisennys(s, r) -> float | None:
+        p, vs = palsta[s["sivu"]], vasemmat[s["sivu"]]
+        if not p or not vs:
+            return None
+        v = max([x for x in vs if x <= r["bbox"][0] + 0.05 * p] or [min(vs)])
+        return (r["bbox"][0] - v) / p
+
+    # kappale: [tyyppi, teksti, rivit, ensimmäisen rivin sisennys]
+    kappaleet: list[list] = []
     ed_sivu, ed_rivi, ed_tess, ed_lyhyt = None, None, None, False
     for s, r in jono:
         sanat = [_nayta(w, taso) for w in r["sanat"]]
@@ -190,24 +210,64 @@ def kokoa(sivut: list[dict], tiedostot: dict[int, str], sanakirjat, a: dict, tas
         # Oikealle siirtynyt rivi (esim. allekirjoitus) aloittaa oman kappaleen; sisennys on paljon pienempi.
         oikealla = (p is not None and ed_rivi is not None and tess[:2] == (ed_tess or ())[:2]
                     and r["bbox"][0] - ed_rivi["bbox"][0] > 0.3 * p)
+        # Riippuva sisennys: numeroidun väliotsikon toinen rivi alkaa numeron jälkeen ('4 Die Dialektik … vom' /
+        # 'Unbedingten'). Edellinen rivi on lyhyt ilman lopetusmerkkiä, ja tämä rivi on hieman oikealla.
+        riippuva = (p is not None and ed_rivi is not None and ed_lyhyt and not uusi_sivu and kappaleet
+                    and kappaleet[-1][0] == "kpl" and kappaleet[-1][2] == 1
+                    and ed_rivi["sanat"][-1]["teksti"][-1:] not in LOPETUS + ",;"
+                    and 0.01 * p < r["bbox"][0] - ed_rivi["bbox"][0] < 0.1 * p)
         if otsikko:
-            kappaleet.append(["otsikko", teksti])
+            if (kappaleet and kappaleet[-1][0] == "otsikko" and ed_rivi is not None and not uusi_sivu
+                    and ed_rivi["korkeus"] >= a["otsikko_kerroin"] * korkeudet[s["sivu"]]):
+                kappaleet[-1][1] += " " + teksti  # kaksirivinen hakusana ('Vernunftwesen / Wesen,' / 'vernünftiges')
+                kappaleet[-1][2] += 1
+            else:
+                kappaleet.append(["otsikko", teksti, 1, sisennys(s, r)])
+        elif riippuva:
+            kappaleet[-1][1] += " " + teksti
+            kappaleet[-1][2] += 1
         elif (not kappaleet or kappaleet[-1][0] == "otsikko" or ed_lyhyt or oikealla
               or tess != ed_tess and not _jatkuu(ed_rivi, r)):
-            kappaleet.append(["kpl", teksti])
+            kappaleet.append(["kpl", teksti, 1, None if oikealla else sisennys(s, r)])
         else:
             kappaleet[-1][1] = _liita(kappaleet[-1][1], teksti, ed_rivi, r, tunnettu, yhdyssanat, s["sivu"], loki)
+            kappaleet[-1][2] += 1
         ed_lyhyt = (p is not None and r["bbox"][2] - r["bbox"][0] < a["lyhyt_rivi"] * p
                     and not r["sanat"][-1]["teksti"].endswith("-"))
         ed_sivu, ed_rivi, ed_tess = s["sivu"], r, tess
 
     runko = []
-    for tyyppi, t in kappaleet:
+    for k, (tyyppi, t, n_rivit, sis) in enumerate(kappaleet):
+        merkki_alku = ""
+        m = re.match(r"^(<!--.*?-->)", t)
+        if m and tyyppi == "otsikko" or m and alaotsikot and _alaotsikko(t[m.end():], n_rivit, sis, k, kappaleet):
+            merkki_alku, t = m.group(1) + "\n", t[m.end():]  # sivumerkki omalle rivilleen otsikon eteen
         t = re.sub(r"^([#>+*-])", r"\\\1", t)  # rivin alun merkit eivät saa muuttua otsikoksi, lainaukseksi tai listaksi
-        runko.append(("## " + t.lstrip("\\")) if tyyppi == "otsikko" else t)
+        if tyyppi == "otsikko":
+            runko.append(merkki_alku + "## " + t.lstrip("\\"))
+        elif alaotsikot and _alaotsikko(t, n_rivit, sis, k, kappaleet):
+            runko.append(merkki_alku + "### " + t)
+            loki.append({"sivu": "", "id": "", "lukemat": t, "valittu": "### " + t, "tila": "väliotsikko",
+                         "peruste": "lyhyt rivi palstan reunasta, ei lopetusmerkkiä, viimeinen sana isolla"})
+        else:
+            runko.append(merkki_alku + t)
     fm = ["---"] + [f"{k}: {v}" for k, v in etukentta.items() if v not in (None, "")] + ["---", ""]
     md = "\n".join(fm) + "\n" + "\n\n".join(runko) + "\n"
     return unicodedata.normalize("NFC", md), loki
+
+
+def _alaotsikko(t: str, n_rivit: int, sis: float | None, k: int, kappaleet: list) -> bool:
+    """Väliotsikko (### ): 1–2 rivin kappale palstan vasemmasta reunasta, enintään 10 sanaa, ei lopetus- tai
+    välimerkkiä lopussa eikä pisteeseen päättyvää sanaa keskellä, alkaa isolla tai numerolla, viimeinen sana
+    alkaa isolla (saksan substantiivi; kieliprofiilin 'alaotsikot'), ja sen jälkeen tulee leipätekstiä."""
+    sanat = t.replace("[?]", "").split()
+    if not sanat or n_rivit > 2 or len(sanat) > 10 or sis is None or abs(sis) > 0.03:
+        return False
+    if k + 1 >= len(kappaleet) or kappaleet[k + 1][0] == "otsikko":
+        return False
+    if t.rstrip()[-1:] in LOPETUS + ",;:-" or any(w.endswith(".") for w in sanat[:-1]) or ";" in t:
+        return False
+    return (sanat[0][:1].isupper() or sanat[0].isdigit()) and sanat[-1][:1].isupper()
 
 
 def _jatkuu(ed: dict | None, r: dict) -> bool:
