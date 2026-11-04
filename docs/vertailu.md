@@ -165,3 +165,24 @@ laajennus: pelkkä välilyöntiero hyväksytään varmuudella korkea tai keski).
 **Varaus:** sama Claude teki kultalitteroinnin ja tarkastuksen, joten ne eivät ole toisistaan riippumattomia. *seiner*
 hyväksyttiin matalalla varmuudella sanakirjan tuella, koska rajauskuvassa i:n piste ei erotu. Tulos on oikea, mutta
 se on päätelty eikä luettu kuvasta, ja se näkyy lokissa.
+
+## Taso 2 koko artikkelilla: Vernunft (4.11.2026)
+
+33 sivua (s. 2486–2519, kuvasta puuttuu s. 2506), 20 948 sanaa. Taso 1 liputti 3,3 % sanoista, ja paketissa oli
+671 kohdetta 539 rajauskuvasta. Claude tarkasti kaikki 671 kohdetta: 444 vahvistettu, 216 korjattu ja 11
+lukukelvoton. Sivun 16 vasemman palstan rivinalut puuttuvat jo alkuperäisestä kuvasta. Olli luki ne
+alkuperäisestä kuvasta (14 vastausta, joista neljä koskee rivejä, joita linjasto ei liputtanut). Tästä syystä
+lukukelvoton-vastaus liputtaa nyt myös liputtamattoman sanan.
+
+Macin ajo (`kokoa --taso 2`): hyväksytty 673, hylätty 19, ei vastausta 4. Tekstiin jäi 23 lippua:
+
+| Syy | Lippuja |
+|---|---|
+| Rivinalku puuttuu kuvasta (s. 16) | 7 |
+| Haamurivit (viereisen tekstin leikattu kopio, 2 riviä) | 4 |
+| Haamusanat (lukukelvoton) | 2 |
+| Korjaus varmuudella keski, ei tukea (mm. 4 × `[...]`, `–`, `§ 8`) | 10 |
+
+Kultaotosta ei ole, joten CER:ää ei mitattu. Rajauskuvien perusteella yleisimmät korjaukset ovat välilyönti
+viitteissä (`A 326`, `B 7).`, `d. h.`), nuoli `→`, ajatusviiva lukuväleissä, yksinkertaiset lainausmerkit (`‚Tat‘`)
+ja yksittäiset kirjaimet (`Funktlon` → `Funktion`).
